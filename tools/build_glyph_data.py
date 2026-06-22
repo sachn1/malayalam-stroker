@@ -11,6 +11,20 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python" / "src"))
 
 from malayalam_stroker import shape_word  # noqa: E402
+from malayalam_stroker._chars import (  # noqa: E402
+    ANUSVARA,
+    AU_LENGTH_MARK,
+    CHILLU,
+    CONSONANTS,
+    INDEPENDENT_VOWELS,
+    MATRAS,
+    NUMERALS,
+    RARE_CONSONANTS,
+    RARE_MATRAS,
+    RARE_VOWELS,
+    VIRAMA,
+    VISARGA,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -22,20 +36,9 @@ _FONT = (
     else str(ROOT / "python" / "tests" / "fixtures" / "Manjari-Regular.ttf")
 )
 
-_CONSONANTS = list("കഖഗഘങചഛജഝഞടഠഡഢണതഥദധനപഫബഭമയരലവശഷസഹളഴറ")
-_MATRAS = list("ാിീുൂൃെേൈൊോൗ")
-_VIRAMA = "\u0d4d"
-_ANUSVARA = "\u0d02"
-_VISARGA = "\u0d03"
-_INDEPENDENT_VOWELS = list("അആഇഈഉഊഋഎഏഐഒഓഔ")
-
 
 def _build_input_list() -> list[str]:
     """Return all Unicode cluster strings to be shaped.
-
-    Parameters
-    ----------
-    None
 
     Returns
     -------
@@ -45,34 +48,50 @@ def _build_input_list() -> list[str]:
     """
     inputs: list[str] = []
 
-    # Standalone characters
+    # Standalone characters (single codepoint)
     standalone = (
-        "".join(_INDEPENDENT_VOWELS) + "".join(_CONSONANTS) + "ൻർൽൾൺ" + "൦൧൨൩൪൫൬൭൮൯"
+        "".join(INDEPENDENT_VOWELS)
+        + "".join(RARE_VOWELS)
+        + "".join(CONSONANTS)
+        + "".join(RARE_CONSONANTS)
+        + "".join(CHILLU)
+        + "".join(NUMERALS)
     )
     inputs.extend(standalone)
 
-    # Consonant + dependent vowel (every syllable)
-    for c in _CONSONANTS:
-        for m in _MATRAS:
+    # Standalone diacritics — anusvara and visarga appear after any cluster
+    # (including conjuncts), so they need their own glyph-data entries.
+    inputs.append(ANUSVARA)
+    inputs.append(VISARGA)
+    inputs.append(AU_LENGTH_MARK)
+
+    # Consonant + dependent vowel (every syllable), including rare matras
+    for c in CONSONANTS:
+        for m in MATRAS + RARE_MATRAS:
             inputs.append(c + m)
 
-    # Conjuncts: consonant + virama + consonant (longest-match, checked first)
-    for c1 in _CONSONANTS:
-        for c2 in _CONSONANTS:
-            inputs.append(c1 + _VIRAMA + c2)
+    # Rare consonants + matras
+    for c in RARE_CONSONANTS:
+        for m in MATRAS:
+            inputs.append(c + m)
+
+    # Conjuncts: consonant + virama + consonant
+    for c1 in CONSONANTS:
+        for c2 in CONSONANTS:
+            inputs.append(c1 + VIRAMA + c2)
 
     # Virama as final marker
     inputs.append("ക്")
 
     # Independent vowels + anusvara / visarga
-    for v in _INDEPENDENT_VOWELS:
-        inputs.append(v + _ANUSVARA)
-        inputs.append(v + _VISARGA)
+    for v in INDEPENDENT_VOWELS + RARE_VOWELS:
+        inputs.append(v + ANUSVARA)
+        inputs.append(v + VISARGA)
 
     # Consonants + anusvara / visarga
-    for c in _CONSONANTS:
-        inputs.append(c + _ANUSVARA)
-        inputs.append(c + _VISARGA)
+    for c in CONSONANTS:
+        inputs.append(c + ANUSVARA)
+        inputs.append(c + VISARGA)
 
     # Deduplicate while preserving order
     seen: set[str] = set()
@@ -132,16 +151,7 @@ def _shape_all(inputs: list[str], font: str) -> dict:
 
 
 def main() -> None:
-    """Entry point: shape all clusters and write js/src/glyph-data.json.
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    -------
-    None
-    """
+    """Entry point: shape all clusters and write js/src/glyph-data.json."""
     inputs = _build_input_list()
     result = _shape_all(inputs, _FONT)
 

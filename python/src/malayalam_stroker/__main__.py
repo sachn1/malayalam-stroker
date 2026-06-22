@@ -20,47 +20,40 @@ import argparse
 import json
 import sys
 
+from ._chars import (
+    ANUSVARA,
+    CHILLU,
+    INDEPENDENT_VOWELS,
+    MATRAS,
+    NUMERALS,
+    RARE_CONSONANTS,
+    RARE_MATRAS,
+    RARE_VOWELS,
+    REGULAR_CONSONANTS,
+    SPECIAL_CONSONANTS,
+    VIRAMA,
+    VISARGA,
+)
 from .strokes import shape_word
 
-# ── Complete Malayalam character inventory ────────────────────────────────
+# All standalone characters as a single string (shaped as one run).
+_STANDALONE = "".join(
+    INDEPENDENT_VOWELS
+    + RARE_VOWELS
+    + REGULAR_CONSONANTS
+    + SPECIAL_CONSONANTS
+    + RARE_CONSONANTS
+    + CHILLU
+    + NUMERALS
+)
 
-# 13 independent vowels (standalone at word start)
-_INDEPENDENT_VOWELS = "അആഇഈഉഊഋഎഏഐഒഓഔ"
-
-# Regular consonants (33)
-_REGULAR_CONSONANTS = "കഖഗഘങചഛജഝഞടഠഡഢണതഥദധനപഫബഭമയരലവശഷസഹ"
-
-# Special consonants (3)
-_SPECIAL_CONSONANTS = "ളഴറ"
-
-# Chillu letters (5) — pure consonants, no inherent vowel
-_CHILLU = "ൻർൽൾൺ"
-
-# Malayalam numerals (10)
-_NUMERALS = "൦൧൨൩൪൫൬൭൮൯"
-
-# Characters above that can be shaped as one long string
-_STANDALONE = _INDEPENDENT_VOWELS + _REGULAR_CONSONANTS + _SPECIAL_CONSONANTS + _CHILLU + _NUMERALS
-
-# Dependent vowel signs (12) + anusvara + visarga + virama — shaped with ക
-# as a carrier so the shaper emits the matra glyph. The recorder deduplicates
-# by glyphName so ക only appears once across all traces.
-_MATRA_SYLLABLES = [
-    "കാ",  # aa sign  ാ
-    "കി",  # i sign   ി
-    "കീ",  # ii sign  ീ
-    "കു",  # u sign   ു
-    "കൂ",  # uu sign  ൂ
-    "കൃ",  # vocalic-r sign ൃ
-    "കെ",  # e sign   െ
-    "കേ",  # ee sign  േ
-    "കൈ",  # ai sign  ൈ
-    "കൊ",  # o sign   ൊ
-    "കോ",  # oo sign  ോ
-    "കൗ",  # au sign  ൗ
-    "കം",  # anusvara ം  (15th independent vowel form)  # noqa: RUF003
-    "കഃ",  # visarga  ഃ  (15th independent vowel form)
-    "ക്",  # virama / chandrakkala ്
+# Each matra (dependent vowel) shaped with ക as a carrier so the shaper
+# emits the sign glyph. Includes anusvara, visarga and virama.
+# The recorder deduplicates by glyphName so ക appears only once.
+_MATRA_SYLLABLES = ["ക" + m for m in MATRAS + RARE_MATRAS] + [
+    "ക" + ANUSVARA,  # anusvara  ം  # noqa: RUF003
+    "ക" + VISARGA,  # visarga   ഃ
+    "ക" + VIRAMA,  # virama    ്
 ]
 
 

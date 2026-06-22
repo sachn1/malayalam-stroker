@@ -46,6 +46,13 @@ let previewPath = null;
  */
 const strokeData = {};
 
+/**
+ * Existing stroke-data.json loaded for merging at export time.
+ *
+ * @type {Record<string, { strokes: { d: string }[] }> | null}
+ */
+let existingStrokeData = null;
+
 // ---------------------------------------------------------------------------
 // SVG helpers
 // ---------------------------------------------------------------------------
@@ -188,6 +195,7 @@ function parseGlyphData(text) {
   glyphIndex = 0;
   document.getElementById("drop-zone").classList.add("hidden");
   document.getElementById("recorder").classList.add("active");
+  populateSelect();
   renderGlyph();
 }
 
@@ -212,6 +220,21 @@ function loadFile(file) {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+
+/**
+ * Populate the jump-to dropdown with all clusters in the current trace.
+ */
+function populateSelect() {
+  const sel = document.getElementById("glyph-select");
+  sel.innerHTML = "";
+  for (const [i, g] of trace.glyphs.entries()) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `${g.clusterStr}  ·  ${i + 1} / ${trace.glyphs.length}`;
+    sel.appendChild(opt);
+  }
+  sel.value = String(glyphIndex);
+}
 
 /**
  * Return the advance width of glyph at index *idx*.
@@ -315,6 +338,10 @@ function renderGlyph() {
 
   document.getElementById("glyph-label").innerHTML =
     `<strong>${g.clusterStr}</strong> &nbsp;·&nbsp; ${glyphIndex + 1} / ${trace.glyphs.length}`;
+
+  // Sync dropdown selection
+  const sel = document.getElementById("glyph-select");
+  if (sel.options.length === trace.glyphs.length) sel.value = String(glyphIndex);
 
   updateCounts();
 
@@ -464,7 +491,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("export-btn").addEventListener("click", () => {
-    const lib = {};
+    // Start from existing file data (if loaded), then overlay current session.
+    const lib = existingStrokeData ? { ...existingStrokeData } : {};
     for (const [name, strokes] of Object.entries(strokeData)) {
       if (strokes.length) lib[name] = { strokes };
     }
@@ -489,5 +517,71 @@ document.addEventListener("DOMContentLoaded", () => {
         btn.textContent = "Copy to clipboard";
       }, 1800);
     });
+  });
+
+  // ── Dropdown: jump to any character ───────────────────────────────────
+  document.getElementById("glyph-select").addEventListener("change", (e) => {
+    glyphIndex = parseInt(e.target.value, 10);
+    renderGlyph();
+  });
+
+  // ── Remove: delete the current character from the session ─────────────
+  document.getElementById("remove-btn").addEventListener("click", () => {
+    if (!trace || trace.glyphs.length === 0) return;
+    const g = trace.glyphs[glyphIndex];
+    delete strokeData[g.clusterStr];
+    trace.glyphs.splice(glyphIndex, 1);
+    if (glyphIndex >= trace.glyphs.length) glyphIndex = Math.max(0, trace.glyphs.length - 1);
+    if (trace.glyphs.length === 0) {
+      document.getElementById("recorder").classList.remove("active");
+      document.getElementById("drop-zone").classList.remove("hidden");
+      return;
+    }
+    populateSelect();
+    renderGlyph();
+  });
+
+  // ── Add: insert a custom cluster (or jump to existing one) ────────────
+  document.getElementById("add-btn").addEventListener("click", () => {
+    const input = document.getElementById("add-input");
+    const cluster = input.value.trim();
+    if (!cluster || !trace) return;
+    const existingIdx = trace.glyphs.findIndex((g) => g.clusterStr === cluster);
+    if (existingIdx !== -1) {
+      glyphIndex = existingIdx;
+    } else {
+      trace.glyphs.push({ clusterStr: cluster, paths: [], advance: trace.unitsPerEm * 0.85 });
+      glyphIndex = trace.glyphs.length - 1;
+    }
+    input.value = "";
+    populateSelect();
+    renderGlyph();
+  });
+  document.getElementById("add-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") document.getElementById("add-btn").click();
+  });
+
+  // ── Merge: load an existing stroke-data.json to append to ─────────────
+  document.getElementById("load-existing-btn").addEventListener("click", () => {
+    document.getElementById("existing-file-input").click();
+  });
+  document.getElementById("existing-file-input").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        existingStrokeData = JSON.parse(ev.target.result);
+        const count = Object.keys(existingStrokeData).length;
+        document.getElementById("merge-status").textContent =
+          `✓ ${count} existing cluster(s) loaded — export will merge`;
+        // Refresh textarea if it is already visible
+        const out = document.getElementById("export-output").value;
+        if (out) document.getElementById("export-btn").click();
+      } catch (err) {
+        alert("Could not load stroke-data.json: " + err.message);
+      }
+    };
+    reader.readAsText(file);
   });
 });

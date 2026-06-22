@@ -27,7 +27,10 @@
     <div id="recorder">
       <div class="nav">
         <button id="prev-btn">◀ Prev</button>
-        <div id="glyph-label"></div>
+        <div class="nav-center">
+          <select id="glyph-select" title="Jump to character"></select>
+          <div id="glyph-label"></div>
+        </div>
         <button id="next-btn">Next ▶</button>
       </div>
       <div id="canvas-wrap"></div>
@@ -39,7 +42,12 @@
         <button id="undo-btn" disabled>↩ Undo</button>
         <button id="clear-btn">✕ Clear</button>
         <span id="stroke-count">0 strokes</span>
+        <button id="remove-btn" class="danger">Remove</button>
         <button class="primary" id="export-btn">Export JSON</button>
+      </div>
+      <div class="add-cluster">
+        <input type="text" id="add-input" placeholder="Add custom cluster, e.g. ന്ന" />
+        <button id="add-btn">+ Add</button>
       </div>
     </div>
 
@@ -49,6 +57,12 @@
         Save this as <code>js/src/stroke-data.json</code> and commit it. The
         demo loads it automatically via <code>writer.loadStrokes()</code>.
       </p>
+      <div class="merge-section">
+        <span>Append to existing file:</span>
+        <button id="load-existing-btn">📂 Load stroke-data.json</button>
+        <input type="file" id="existing-file-input" accept=".json" style="display:none" />
+        <span id="merge-status"></span>
+      </div>
       <textarea id="export-output" readonly spellcheck="false"></textarea>
       <div class="export-actions">
         <button id="download-btn" class="primary">⬇ Download stroke-data.json</button>
