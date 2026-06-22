@@ -1,0 +1,143 @@
+/* demo.css — styles for the malayalam-stroker interactive demo */
+
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 520px;
+  margin: 3rem auto;
+  text-align: center;
+  --ms-ink-color: #1a1a2e;
+  --ms-ghost-color: #e0daf5;
+  --ms-stylus-color: #e8b84b;
+  color: #1a1a2e;
+}
+
+p.sub {
+  color: #6b6591;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+input[type="text"] {
+  flex: 1;
+  font: inherit;
+  font-size: 1.4rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #e0daf5;
+  border-radius: 8px;
+  text-align: center;
+}
+
+button {
+  font: inherit;
+  padding: 0.5rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  background: #af95db;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #6d28d9;
+}
+
+button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+/* ── Suggestion chips ── */
+
+.chips {
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+}
+
+.chips button {
+  background: none;
+  color: #6d28d9;
+  border: 1px solid #e0daf5;
+  padding: 0.2rem 0.6rem;
+  margin: 0.15rem;
+  font-size: 0.9rem;
+}
+
+.chips button:hover {
+  background: #f3f0fb;
+}
+
+/* ── Stage ── */
+
+#stage {
+  border: 1px solid #e0daf5;
+  border-radius: 12px;
+  padding: 1.5rem;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#stage svg {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+  overflow: visible;
+}
+
+#status {
+  color: #b00020;
+  font-size: 0.82rem;
+  min-height: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+#replay {
+  margin-top: 1rem;
+  background: none;
+  color: #6d28d9;
+  border: 1px solid #af95db;
+}
+
+/* ── Stroke library drop zone ── */
+
+#lib-bar {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e0daf5;
+}
+
+#lib-bar p {
+  font-size: 0.8rem;
+  color: #6b6591;
+  margin-bottom: 0.5rem;
+}
+
+#lib-drop {
+  display: block;
+  border: 2px dashed #c4b5e8;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  font-size: 0.82rem;
+  color: #6b6591;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s;
+}
+
+#lib-drop:hover {
+  border-color: #6d28d9;
+}
+
+#lib-status {
+  font-size: 0.78rem;
+  color: #6d28d9;
+  min-height: 1rem;
+  margin-top: 0.3rem;
+}

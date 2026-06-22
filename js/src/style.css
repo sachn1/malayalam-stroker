@@ -1,27 +1,31 @@
-/* malayalam-stroker default styles.
-   Import this or write your own rules against these classes.
-   Theme via CSS custom properties on a parent element:
-     .my-stage {
-       --ms-ink-color:    #1a1a2e;
-       --ms-ghost-color:  #e0daf5;
-       --ms-stylus-color: #e8b84b;
-     }
-*/
+/**
+ * malayalam-stroker default styles.
+ *
+ * Import this file or define your own rules against the same class names.
+ * Customise via CSS custom properties on any ancestor element:
+ *
+ *   .my-stage {
+ *     --ms-ghost-color:  #e0daf5;
+ *     --ms-ink-color:    #1a1a2e;
+ *     --ms-stylus-color: #e8b84b;
+ *   }
+ */
 
-/* Ghost: thin wireframe outline of the complete letter */
+/** Ghost: thin wireframe of the complete letterform, drawn before animation. */
 .ms-ghost path {
   fill: none;
   stroke: var(--ms-ghost-color, #c4b5e8);
+  stroke-width: 1;
 }
 
-/* The animated pen trace line drawn over the ghost */
+/** Animated ink trace drawn over the ghost. */
 .ms-stroke {
   stroke: var(--ms-ink-color, #1a1a2e);
   fill: none;
-  /* stroke-width is set in JS (scales with unitsPerEm); override here if needed */
+  /* stroke-width is set in JS proportional to unitsPerEm; override here if needed. */
 }
 
-/* The glowing stylus dot at the pen tip */
+/** Glowing stylus dot at the pen tip. */
 .ms-stylus {
   fill: var(--ms-stylus-color, #e8b84b);
   filter: drop-shadow(0 0 4px rgba(232, 184, 75, 0.85));

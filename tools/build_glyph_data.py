@@ -1,20 +1,6 @@
 #!/usr/bin/env python3
-"""Build tool: pre-compute SVG glyph paths for all Malayalam characters.
+"""Pre-compute SVG glyph paths for all Malayalam clusters and write glyph-data.json."""
 
-Shapes every base character + all consonant-matra combinations using the
-Python shaper (HarfBuzz), then writes a single JSON file that the JS
-package bundles. After this runs, the JS package needs no server and no
-font at runtime.
-
-Usage:
-    python tools/build_glyph_data.py
-
-    # optionally supply a different font (defaults to the bundled Manjari-Regular.ttf):
-    python tools/build_glyph_data.py /path/to/MyFont.ttf
-
-Output:
-    js/src/glyph-data.json
-"""
 from __future__ import annotations
 
 import json
@@ -26,84 +12,149 @@ sys.path.insert(0, str(ROOT / "python" / "src"))
 
 from malayalam_stroker import shape_word  # noqa: E402
 
-FONT = (
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_FONT = (
     sys.argv[1]
     if len(sys.argv) > 1
     else str(ROOT / "python" / "tests" / "fixtures" / "Manjari-Regular.ttf")
 )
 
-CONSONANTS = list("കഖഗഘങചഛജഝഞടഠഡഢണതഥദധനപഫബഭമയരലവശഷസഹളഴറ")
-MATRAS     = list("ാിീുൂൃെേൈൊോൗ")
-VIRAMA     = "\u0d4d"
+_CONSONANTS = list("കഖഗഘങചഛജഝഞടഠഡഢണതഥദധനപഫബഭമയരലവശഷസഹളഴറ")
+_MATRAS = list("ാിീുൂൃെേൈൊോൗ")
+_VIRAMA = "\u0d4d"
+_ANUSVARA = "\u0d02"
+_VISARGA = "\u0d03"
+_INDEPENDENT_VOWELS = list("അആഇഈഉഊഋഎഏഐഒഓഔ")
 
-# All inputs to shape — each becomes one entry keyed by its Unicode string
-inputs: list[str] = []
 
-# Standalone characters
-for ch in (
-    "അആഇഈഉഊഋഎഏഐഒഓഔ"   # independent vowels
-    + "".join(CONSONANTS)
-    + "ൻർൽൾൺ"             # chillu
-    + "൦൧൨൩൪൫൬൭൮൯"        # numerals
-):
-    inputs.append(ch)
+def _build_input_list() -> list[str]:
+    """Return all Unicode cluster strings to be shaped.
 
-# Consonant + matra (all combinations — covers every written syllable)
-for c in CONSONANTS:
-    for m in MATRAS:
-        inputs.append(c + m)
+    Parameters
+    ----------
+    None
 
-# Conjuncts: consonant + virama + consonant (3-char clusters)
-# These are looked up first by segmentText's longest-match logic.
-for c1 in CONSONANTS:
-    for c2 in CONSONANTS:
-        inputs.append(c1 + VIRAMA + c2)
+    Returns
+    -------
+    list[str]
+        Deduplicated list of cluster strings: standalone characters,
+        consonant+matra (2-char), conjuncts (3-char), and mark combinations.
+    """
+    inputs: list[str] = []
 
-# Special marks shaped against a carrier
-for syllable in ["ക്", "കം", "കഃ"]:
-    inputs.append(syllable)
+    # Standalone characters
+    standalone = (
+        "".join(_INDEPENDENT_VOWELS) + "".join(_CONSONANTS) + "ൻർൽൾൺ" + "൦൧൨൩൪൫൬൭൮൯"
+    )
+    inputs.extend(standalone)
 
-# Independent vowels + anusvara/visarga (e.g. അം, അഃ, ആം ...)
-INDEPENDENT_VOWELS = list("അആഇഈഉഊഋഎഏഐഒഓഔ")
-for v in INDEPENDENT_VOWELS:
-    inputs.append(v + "\u0d02")   # + anusvara ം
-    inputs.append(v + "\u0d03")   # + visarga ഃ
+    # Consonant + dependent vowel (every syllable)
+    for c in _CONSONANTS:
+        for m in _MATRAS:
+            inputs.append(c + m)
 
-# All consonants + anusvara / visarga ( കം ഖം ... കഃ ഖഃ ...)
-for c in CONSONANTS:
-    inputs.append(c + "\u0d02")   # + anusvara
-    inputs.append(c + "\u0d03")   # + visarga
+    # Conjuncts: consonant + virama + consonant (longest-match, checked first)
+    for c1 in _CONSONANTS:
+        for c2 in _CONSONANTS:
+            inputs.append(c1 + _VIRAMA + c2)
 
-# ── shape everything ──────────────────────────────────────────────────────
-result: dict = {"meta": None, "clusters": {}}
-ok = skipped = 0
+    # Virama as final marker
+    inputs.append("ക്")
 
-for inp in inputs:
-    if inp in result["clusters"]:
-        continue
-    try:
-        trace = shape_word(inp, FONT)
-    except Exception as exc:
-        print(f"  skip {inp!r}: {exc}", file=sys.stderr)
-        skipped += 1
-        continue
+    # Independent vowels + anusvara / visarga
+    for v in _INDEPENDENT_VOWELS:
+        inputs.append(v + _ANUSVARA)
+        inputs.append(v + _VISARGA)
 
-    if result["meta"] is None:
-        result["meta"] = {
-            "unitsPerEm": trace["unitsPerEm"],
-            "ascent":     trace["ascent"],
-            "descent":    trace["descent"],
+    # Consonants + anusvara / visarga
+    for c in _CONSONANTS:
+        inputs.append(c + _ANUSVARA)
+        inputs.append(c + _VISARGA)
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in inputs:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
+
+
+def _shape_all(inputs: list[str], font: str) -> dict:
+    """Shape every input cluster and collect results.
+
+    Parameters
+    ----------
+    inputs : list[str]
+        Unicode cluster strings to shape.
+    font : str
+        Path to the TrueType font file.
+
+    Returns
+    -------
+    dict
+        ``{"meta": {...}, "clusters": {cluster: {"glyphs": [...], "advance": N}}}``
+    """
+    result: dict = {"meta": None, "clusters": {}}
+    ok = skipped = 0
+
+    for inp in inputs:
+        if inp in result["clusters"]:
+            continue
+        try:
+            trace = shape_word(inp, font)
+        except Exception as exc:
+            print(f"  skip {inp!r}: {exc}", file=sys.stderr)
+            skipped += 1
+            continue
+
+        if result["meta"] is None:
+            result["meta"] = {
+                "unitsPerEm": trace["unitsPerEm"],
+                "ascent": trace["ascent"],
+                "descent": trace["descent"],
+            }
+
+        result["clusters"][inp] = {
+            "glyphs": [
+                {"d": g["d"], "x": g["x"], "y": g["y"]} for g in trace["glyphs"]
+            ],
+            "advance": trace["totalAdvance"],
         }
+        ok += 1
 
-    result["clusters"][inp] = {
-        "glyphs":  [{"d": g["d"], "x": g["x"], "y": g["y"]} for g in trace["glyphs"]],
-        "advance": trace["totalAdvance"],
-    }
-    ok += 1
+    print(f"  shaped {ok} clusters, skipped {skipped}", file=sys.stderr)
+    return result
 
-out_path = ROOT / "js" / "src" / "glyph-data.json"
-out_path.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
-size_kb = out_path.stat().st_size // 1024
-print(f"Written {out_path.relative_to(ROOT)}  ({size_kb} KB, {ok} clusters, {skipped} skipped)",
-      file=sys.stderr)
+def main() -> None:
+    """Entry point: shape all clusters and write js/src/glyph-data.json.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    inputs = _build_input_list()
+    result = _shape_all(inputs, _FONT)
+
+    out_path = ROOT / "js" / "src" / "glyph-data.json"
+    out_path.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+
+    size_kb = out_path.stat().st_size // 1024
+    print(
+        f"Written {out_path.relative_to(ROOT)}  ({size_kb} KB, "
+        f"{len(result['clusters'])} clusters)",
+        file=sys.stderr,
+    )
+
+
+if __name__ == "__main__":
+    main()

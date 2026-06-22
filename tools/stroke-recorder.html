@@ -1,535 +1,61 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>Stroke Recorder — malayalam-stroker</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: system-ui, sans-serif;
-      background: #f8f7fc;
-      color: #1a1a2e;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 1.5rem 1rem 3rem;
-      gap: 1rem;
-    }
-    h1 { font-size: 1.1rem; color: #6d28d9; letter-spacing: 0.01em; }
-    p.sub { font-size: 0.82rem; color: #6b6591; text-align: center; max-width: 560px; }
-    code { background: #ede9f7; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+  <head>
+    <meta charset="utf-8" />
+    <title>Stroke Recorder — malayalam-stroker</title>
+    <link rel="stylesheet" href="stroke-recorder.css" />
+  </head>
+  <body>
+    <h1>Stroke Recorder — malayalam-stroker</h1>
+    <p class="sub">
+      Draw over each ghosted glyph to record how it is written. Each
+      pen-down→pen-up gesture becomes one stroke. Export when done and save
+      as <code>js/src/stroke-data.json</code>.
+    </p>
 
-    /* ── drop zone ── */
-    #drop-zone {
-      border: 2px dashed #c4b5e8;
-      border-radius: 12px;
-      padding: 2rem;
-      text-align: center;
-      cursor: pointer;
-      background: white;
-      width: 100%;
-      max-width: 580px;
-      transition: border-color 0.15s;
-    }
-    #drop-zone:hover, #drop-zone.over { border-color: #6d28d9; }
-    #drop-zone p { color: #6b6591; line-height: 1.7; font-size: 0.9rem; }
-    #drop-zone.hidden { display: none; }
+    <div id="drop-zone">
+      <p>
+        Drop <strong>glyph-data.json</strong> here, or click to browse.<br />
+        <small>
+          Located at <code>js/src/glyph-data.json</code> in this repo — it
+          contains all Malayalam clusters pre-shaped from the font.
+        </small>
+      </p>
+      <input type="file" id="file-input" accept=".json" style="display: none" />
+    </div>
 
-    /* ── recorder ── */
-    #recorder { display: none; width: 100%; max-width: 580px; }
-    #recorder.active { display: block; }
+    <div id="recorder">
+      <div class="nav">
+        <button id="prev-btn">◀ Prev</button>
+        <div id="glyph-label"></div>
+        <button id="next-btn">Next ▶</button>
+      </div>
+      <div id="canvas-wrap"></div>
+      <p class="hint">
+        Draw over the ghost with your mouse or finger. Each gesture = one
+        stroke, in writing order.
+      </p>
+      <div class="controls">
+        <button id="undo-btn" disabled>↩ Undo</button>
+        <button id="clear-btn">✕ Clear</button>
+        <span id="stroke-count">0 strokes</span>
+        <button class="primary" id="export-btn">Export JSON</button>
+      </div>
+    </div>
 
-    .nav {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 0.6rem;
-      gap: 0.5rem;
-    }
-    #glyph-label {
-      font-size: 0.85rem;
-      color: #6b6591;
-      text-align: center;
-      flex: 1;
-    }
-    #glyph-label strong { color: #1a1a2e; font-size: 1rem; }
+    <div id="export-area">
+      <h2>stroke-data.json</h2>
+      <p class="sub">
+        Save this as <code>js/src/stroke-data.json</code> and commit it. The
+        demo loads it automatically via <code>writer.loadStrokes()</code>.
+      </p>
+      <textarea id="export-output" readonly spellcheck="false"></textarea>
+      <div class="export-actions">
+        <button id="download-btn" class="primary">⬇ Download stroke-data.json</button>
+        <button id="copy-btn">Copy to clipboard</button>
+      </div>
+    </div>
 
-    #canvas-wrap {
-      border: 1px solid #e0daf5;
-      border-radius: 12px;
-      background: white;
-      cursor: crosshair;
-      touch-action: none;
-      user-select: none;
-      overflow: hidden;
-    }
-    #canvas-wrap svg { display: block; width: 100%; max-height: 300px; }
-
-    .hint {
-      font-size: 0.78rem;
-      color: #9d8ec7;
-      text-align: center;
-      margin-top: 0.4rem;
-    }
-
-    .controls {
-      display: flex;
-      gap: 0.5rem;
-      margin-top: 0.75rem;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-    #stroke-count {
-      font-size: 0.82rem;
-      color: #6b6591;
-      margin-left: auto;
-    }
-
-    button {
-      font: inherit;
-      font-size: 0.88rem;
-      padding: 0.35rem 0.85rem;
-      border-radius: 8px;
-      border: 1px solid #c4b5e8;
-      background: white;
-      color: #1a1a2e;
-      cursor: pointer;
-      transition: background 0.1s;
-    }
-    button:hover:not(:disabled) { background: #f3f0fb; }
-    button.primary { background: #6d28d9; color: white; border-color: #6d28d9; }
-    button.primary:hover:not(:disabled) { background: #5b21b6; }
-    button:disabled { opacity: 0.38; cursor: not-allowed; }
-
-    /* ── export ── */
-    #export-area {
-      width: 100%;
-      max-width: 580px;
-      display: none;
-    }
-    #export-area h2 { font-size: 0.9rem; color: #6d28d9; margin-bottom: 0.5rem; }
-    #export-area p.sub { text-align: left; margin-bottom: 0.5rem; }
-    textarea {
-      width: 100%;
-      height: 220px;
-      font: 0.75rem/1.5 monospace;
-      border: 1px solid #e0daf5;
-      border-radius: 8px;
-      padding: 0.75rem;
-      resize: vertical;
-      background: #f8f7fc;
-      color: #1a1a2e;
-    }
-    #copy-btn { margin-top: 0.5rem; }
-
-    /* ── stroke number badges ── */
-    .stroke-num {
-      font: bold 0.65rem/1 system-ui;
-      fill: #6d28d9;
-    }
-  </style>
-</head>
-<body>
-
-<h1>Stroke Recorder — malayalam-stroker</h1>
-<p class="sub">
-  Draw over each ghosted glyph to record how it is written. Each pen-down→pen-up
-  gesture becomes one stroke. Export when done and paste into <code>STROKE_LIBRARY</code>.
-</p>
-
-<div id="drop-zone">
-  <p>
-    Drop <strong>glyph-data.json</strong> here, or click to browse.<br/>
-    <small>
-      Find it at <code>js/src/glyph-data.json</code> in this repo — it contains
-      all Malayalam clusters pre-shaped from the font.
-    </small>
-  </p>
-  <input type="file" id="file-input" accept=".json" style="display:none" />
-</div>
-
-<div id="recorder">
-  <div class="nav">
-    <button id="prev-btn">◀ Prev</button>
-    <div id="glyph-label"></div>
-    <button id="next-btn">Next ▶</button>
-  </div>
-  <div id="canvas-wrap"></div>
-  <p class="hint">Draw over the ghost with your mouse or finger. Each gesture = one stroke, in writing order.</p>
-  <div class="controls">
-    <button id="undo-btn" disabled>↩ Undo</button>
-    <button id="clear-btn">✕ Clear</button>
-    <span id="stroke-count">0 strokes</span>
-    <button class="primary" id="export-btn">Export JSON</button>
-  </div>
-</div>
-
-<div id="export-area">
-  <h2>stroke-data.json</h2>
-  <p class="sub">
-    Save this as <code>js/stroke-data.json</code> and commit it.
-    The demo loads it automatically via <code>writer.loadStrokes()</code>.
-  </p>
-  <textarea id="export-output" readonly spellcheck="false"></textarea>
-  <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
-    <button id="download-btn" class="primary">⬇ Download stroke-data.json</button>
-    <button id="copy-btn">Copy to clipboard</button>
-  </div>
-</div>
-
-<script>
-/* ─────────────────────────────────────────────────────────────────────────
-   State
-───────────────────────────────────────────────────────────────────────── */
-const SVGNS = "http://www.w3.org/2000/svg";
-
-let trace       = null;   // loaded StrokeTrace JSON
-let glyphIndex  = 0;      // which glyph is shown
-let drawingSvg  = null;   // current SVG element
-let currentPts  = null;   // points being drawn right now
-let previewPath = null;   // the live in-progress path
-
-// strokeData[clusterStr] = [ {d: "M..."}, ... ]  (clusterStr = Unicode cluster e.g. "ന", "ദി")
-const strokeData = {};
-
-/* ─────────────────────────────────────────────────────────────────────────
-   File loading
-───────────────────────────────────────────────────────────────────────── */
-const dropZone  = document.getElementById("drop-zone");
-const fileInput = document.getElementById("file-input");
-
-dropZone.addEventListener("click",      () => fileInput.click());
-dropZone.addEventListener("dragover",   e  => { e.preventDefault(); dropZone.classList.add("over"); });
-dropZone.addEventListener("dragleave",  ()  => dropZone.classList.remove("over"));
-dropZone.addEventListener("drop",       e  => { e.preventDefault(); dropZone.classList.remove("over"); loadFile(e.dataTransfer.files[0]); });
-fileInput.addEventListener("change",    ()  => loadFile(fileInput.files[0]));
-
-function loadFile(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      const parsed = JSON.parse(ev.target.result);
-      let unitsPerEm, ascent, descent, glyphs;
-
-      if (parsed.meta && parsed.clusters) {
-        // glyph-data.json format (preferred)
-        ({ unitsPerEm, ascent, descent } = parsed.meta);
-        glyphs = Object.entries(parsed.clusters).map(([clusterStr, entry]) => ({
-          clusterStr,
-          paths: entry.glyphs,   // [{d, x, y}] — one or more sub-glyphs per cluster
-          advance: entry.advance,
-        }));
-      } else {
-        // Legacy: StrokeTrace or array of StrokeTraces from Python CLI
-        const sources = Array.isArray(parsed) ? parsed : [parsed];
-        if (!sources[0]?.glyphs) throw new Error("Not a recognised format (missing 'clusters' or 'glyphs')");
-        ({ unitsPerEm, ascent, descent } = sources[0]);
-        const seen = new Set();
-        glyphs = [];
-        for (const src of sources) {
-          for (const g of src.glyphs) {
-            if (!seen.has(g.glyphName)) {
-              seen.add(g.glyphName);
-              glyphs.push({
-                clusterStr: g.glyphName,
-                paths: [{ d: g.d, x: 0, y: 0 }],
-                advance: unitsPerEm * 0.85,
-              });
-            }
-          }
-        }
-      }
-
-      trace = { unitsPerEm, ascent, descent, glyphs };
-      glyphIndex = 0;
-      dropZone.classList.add("hidden");
-      document.getElementById("recorder").classList.add("active");
-      renderGlyph();
-    } catch (err) {
-      alert("Could not load JSON: " + err.message);
-    }
-  };
-  reader.readAsText(file);
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   SVG helpers
-───────────────────────────────────────────────────────────────────────── */
-function svgEl(tag, attrs) {
-  const el = document.createElementNS(SVGNS, tag);
-  for (const k in attrs) el.setAttribute(k, attrs[k]);
-  return el;
-}
-
-// Convert a pointer event to SVG coordinate space (font units)
-function toSvgPt(svg, e) {
-  const pt  = svg.createSVGPoint();
-  const src = e.touches ? e.touches[0] : e;
-  pt.x = src.clientX;
-  pt.y = src.clientY;
-  return pt.matrixTransform(svg.getScreenCTM().inverse());
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Stroke smoothing  (Catmull-Rom → cubic bezier)
-   Removes pixel jitter while preserving the natural shape of the drawing.
-───────────────────────────────────────────────────────────────────────── */
-const TENSION = 0.4;
-
-function smoothPath(pts) {
-  if (pts.length < 2) return "";
-  if (pts.length === 2)
-    return `M ${r(pts[0].x)} ${r(pts[0].y)} L ${r(pts[1].x)} ${r(pts[1].y)}`;
-
-  let d = `M ${r(pts[0].x)} ${r(pts[0].y)}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[Math.max(i - 1, 0)];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[Math.min(i + 2, pts.length - 1)];
-    const cp1x = p1.x + (p2.x - p0.x) * TENSION;
-    const cp1y = p1.y + (p2.y - p0.y) * TENSION;
-    const cp2x = p2.x - (p3.x - p1.x) * TENSION;
-    const cp2y = p2.y - (p3.y - p1.y) * TENSION;
-    d += ` C ${r(cp1x)} ${r(cp1y)} ${r(cp2x)} ${r(cp2y)} ${r(p2.x)} ${r(p2.y)}`;
-  }
-  return d;
-}
-
-function r(n) { return Math.round(n); }
-
-// Drop points that are too close together to reduce noise
-function downsample(pts, minDist = 6) {
-  if (pts.length <= 2) return pts;
-  const out = [pts[0]];
-  for (let i = 1; i < pts.length - 1; i++) {
-    const prev = out[out.length - 1];
-    const dx = pts[i].x - prev.x, dy = pts[i].y - prev.y;
-    if (Math.sqrt(dx * dx + dy * dy) >= minDist) out.push(pts[i]);
-  }
-  out.push(pts[pts.length - 1]);
-  return out;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Render one glyph + its recorded strokes
-───────────────────────────────────────────────────────────────────────── */
-function glyphWidth(idx) {
-  return trace.glyphs[idx]?.advance ?? trace.unitsPerEm * 0.85;
-}
-
-function renderGlyph() {
-  const wrap = document.getElementById("canvas-wrap");
-  const g    = trace.glyphs[glyphIndex];
-  const { unitsPerEm, ascent, descent } = trace;
-
-  // ViewBox in glyph-local font-unit coordinates (y-down, no translate)
-  const pad  = unitsPerEm * 0.12;
-  const w    = Math.max(glyphWidth(glyphIndex), unitsPerEm * 0.5);
-  const vbX  = -pad;
-  const vbY  = -(ascent + pad);
-  const vbW  = w + pad * 2;
-  const vbH  = (ascent - descent) + pad * 2;
-
-  const svg = document.createElementNS(SVGNS, "svg");
-  svg.setAttribute("viewBox", `${vbX} ${vbY} ${vbW} ${vbH}`);
-  svg.style.cssText = "display:block; width:100%; max-height:300px;";
-
-  // Ghost — composite all sub-glyphs that make up this cluster
-  g.paths.forEach(p => {
-    const ghost = svgEl("path", {
-      d: p.d,
-      fill: "#e0daf5",
-      opacity: "0.5",
-      stroke: "#c4b5e8",
-      "stroke-width": unitsPerEm * 0.010,
-      "fill-rule": "evenodd",
-    });
-    if (p.x || p.y) ghost.setAttribute("transform", `translate(${p.x},${p.y})`);
-    svg.appendChild(ghost);
-  });
-
-  // Previously recorded strokes for this glyph
-  const strokes = strokeData[g.clusterStr] ?? [];
-  strokes.forEach((s, idx) => {
-    const strokePath = svgEl("path", {
-      d: s.d,
-      fill: "none",
-      stroke: "#6d28d9",
-      "stroke-width": unitsPerEm * 0.025,
-      "stroke-linecap": "round",
-      "stroke-linejoin": "round",
-    });
-    svg.appendChild(strokePath);
-
-    // Small number badge at the start of each stroke to show order
-    const startPt = getPathStart(s.d);
-    if (startPt) {
-      const badge = svgEl("circle", {
-        cx: startPt.x,
-        cy: startPt.y,
-        r: unitsPerEm * 0.04,
-        fill: "#6d28d9",
-        opacity: "0.85",
-      });
-      const label = svgEl("text", {
-        x: startPt.x,
-        y: startPt.y,
-        "text-anchor": "middle",
-        "dominant-baseline": "central",
-        fill: "white",
-        "font-size": unitsPerEm * 0.06,
-        "font-weight": "bold",
-        "font-family": "system-ui",
-      });
-      label.textContent = String(idx + 1);
-      svg.appendChild(badge);
-      svg.appendChild(label);
-    }
-  });
-
-  wrap.innerHTML = "";
-  wrap.appendChild(svg);
-  drawingSvg  = svg;
-  previewPath = null;
-  currentPts  = null;
-
-  // Label
-  document.getElementById("glyph-label").innerHTML =
-    `<strong>${g.clusterStr}</strong> &nbsp;·&nbsp; ${glyphIndex + 1} / ${trace.glyphs.length}`;
-
-  updateCounts();
-
-  document.getElementById("prev-btn").disabled = glyphIndex === 0;
-  document.getElementById("next-btn").disabled = glyphIndex === trace.glyphs.length - 1;
-
-  // Drawing events
-  svg.addEventListener("pointerdown",  onPointerDown);
-  svg.addEventListener("pointermove",  onPointerMove);
-  svg.addEventListener("pointerup",    onPointerUp);
-  svg.addEventListener("pointercancel", onPointerUp);
-}
-
-function getPathStart(d) {
-  const m = d.match(/M\s*([-\d.]+)\s+([-\d.]+)/);
-  return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : null;
-}
-
-function updateCounts() {
-  const g = trace.glyphs[glyphIndex];
-  const n = (strokeData[g.clusterStr] ?? []).length;
-  document.getElementById("stroke-count").textContent =
-    `${n} stroke${n !== 1 ? "s" : ""} recorded`;
-  document.getElementById("undo-btn").disabled = n === 0;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Drawing event handlers
-───────────────────────────────────────────────────────────────────────── */
-function onPointerDown(e) {
-  e.preventDefault();
-  drawingSvg.setPointerCapture(e.pointerId);
-  const pt = toSvgPt(drawingSvg, e);
-  currentPts = [{ x: pt.x, y: pt.y }];
-
-  const { unitsPerEm } = trace;
-  previewPath = svgEl("path", {
-    fill: "none",
-    stroke: "#1a1a2e",
-    "stroke-width": unitsPerEm * 0.025,
-    "stroke-linecap": "round",
-    "stroke-linejoin": "round",
-    opacity: "0.6",
-  });
-  drawingSvg.appendChild(previewPath);
-}
-
-function onPointerMove(e) {
-  if (!currentPts) return;
-  e.preventDefault();
-  const pt = toSvgPt(drawingSvg, e);
-  currentPts.push({ x: pt.x, y: pt.y });
-  // Live preview with light downsampling
-  previewPath.setAttribute("d", smoothPath(downsample(currentPts, 3)));
-}
-
-function onPointerUp(e) {
-  if (!currentPts) return;
-  const pts = downsample(currentPts, 6);
-  currentPts  = null;
-  previewPath = null;
-
-  if (pts.length < 2) {
-    renderGlyph();
-    return;
-  }
-
-  const d = smoothPath(pts);
-  const g = trace.glyphs[glyphIndex];
-  if (!strokeData[g.clusterStr]) strokeData[g.clusterStr] = [];
-  strokeData[g.clusterStr].push({ d });
-
-  renderGlyph(); // re-render with the new stroke shown in final style
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Control buttons
-───────────────────────────────────────────────────────────────────────── */
-document.getElementById("prev-btn").addEventListener("click", () => {
-  if (glyphIndex > 0) { glyphIndex--; renderGlyph(); }
-});
-document.getElementById("next-btn").addEventListener("click", () => {
-  if (glyphIndex < (trace?.glyphs.length ?? 0) - 1) { glyphIndex++; renderGlyph(); }
-});
-document.getElementById("undo-btn").addEventListener("click", () => {
-  const g = trace.glyphs[glyphIndex];
-  if (strokeData[g.clusterStr]?.length) {
-    strokeData[g.clusterStr].pop();
-    renderGlyph();
-  }
-});
-document.getElementById("clear-btn").addEventListener("click", () => {
-  const g = trace.glyphs[glyphIndex];
-  strokeData[g.clusterStr] = [];
-  renderGlyph();
-});
-
-document.getElementById("export-btn").addEventListener("click", () => {
-  // Only include glyphs that have at least one stroke
-  const lib = {};
-  for (const [name, strokes] of Object.entries(strokeData)) {
-    if (strokes.length) lib[name] = { strokes };
-  }
-  const out = JSON.stringify(lib, null, 2);
-  const ta  = document.getElementById("export-output");
-  ta.value  = out;
-  const area = document.getElementById("export-area");
-  area.style.display = "block";
-  area.scrollIntoView({ behavior: "smooth" });
-});
-
-document.getElementById("copy-btn").addEventListener("click", () => {
-  const text = document.getElementById("export-output").value;
-  navigator.clipboard.writeText(text).then(() => {
-    const btn = document.getElementById("copy-btn");
-    btn.textContent = "Copied!";
-    setTimeout(() => { btn.textContent = "Copy to clipboard"; }, 1800);
-  });
-});
-
-document.getElementById("download-btn").addEventListener("click", () => {
-  const text = document.getElementById("export-output").value;
-  if (!text) return;
-  const blob = new Blob([text], { type: "application/json" });
-  const url  = URL.createObjectURL(blob);
-  const a    = Object.assign(document.createElement("a"), { href: url, download: "stroke-data.json" });
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-});
-</script>
-</body>
+    <script src="stroke-recorder.js"></script>
+  </body>
 </html>

@@ -1,4 +1,5 @@
-# malayalam-stroker
+
+# malayalam-stroker ![malayalam-stroker — writing the letter മ](demo/ma.gif)
 
 A JavaScript library for animating Malayalam script as handwriting — showing
 *how* to write a letter or word, not just what it looks like. Think

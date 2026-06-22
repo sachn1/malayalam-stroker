@@ -1,3 +1,4 @@
+
 # malayalam-stroker (JS)
 
 Animates Malayalam text as handwriting — a pen traces each letter left to right,

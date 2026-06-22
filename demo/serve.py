@@ -1,23 +1,4 @@
-"""Tiny local server for the interactive malayalam-stroker demo.
-
-This exists because shaping happens server-side (HarfBuzz needs a font
-file on disk) — the JS package only *animates* pre-shaped JSON, it can't
-shape arbitrary typed text by itself in the browser. So unlike
-js/examples/demo.html (a single static word, no server needed), this
-demo lets you type any word and traces it live.
-
-Serves the whole repo root as static files (so demo/index.html can
-import ../js/src/index.js directly, no build step, no duplication) plus
-one dynamic route:
-
-    GET /api/shape/<word> -> StrokeTrace JSON, shaped on the fly
-
-stdlib only — no Flask/FastAPI dependency, just `python demo/serve.py`.
-
-Run:
-    python demo/serve.py
-Then open http://127.0.0.1:8000/demo/
-"""
+"""Static file server and shaping API for the malayalam-stroker demo."""
 
 from __future__ import annotations
 
@@ -43,7 +24,10 @@ _CONTENT_TYPES = {
 
 
 class DemoHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for static files and the /api/shape/ endpoint."""
+
     def do_GET(self) -> None:
+        """Handle GET requests, routing to static or shape handler."""
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/shape/"):
             self._handle_shape(unquote(parsed.path[len("/api/shape/") :]))
@@ -51,6 +35,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         self._serve_static(parsed.path)
 
     def _serve_static(self, path: str) -> None:
+        """Serve a file from the repo root, rejecting path-traversal attempts."""
         rel = path.lstrip("/") or "demo/demo_index.html"
         if rel == "demo" or rel == "demo/":
             rel = "demo/demo_index.html"
@@ -66,12 +51,14 @@ class DemoHandler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header(
-            "Content-Type", _CONTENT_TYPES.get(file_path.suffix, "application/octet-stream")
+            "Content-Type",
+            _CONTENT_TYPES.get(file_path.suffix, "application/octet-stream"),
         )
         self.end_headers()
         self.wfile.write(file_path.read_bytes())
 
     def _handle_shape(self, word: str) -> None:
+        """Shape *word* with HarfBuzz and return StrokeTrace JSON."""
         try:
             trace = shape_word(word, FONT_PATH)
             body = json.dumps(trace, ensure_ascii=False).encode("utf-8")
@@ -85,7 +72,8 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args) -> None:  # quiet by default
+    def log_message(self, format: str, *args) -> None:  # noqa: A002
+        """Suppress default access-log output."""
         pass
 
 

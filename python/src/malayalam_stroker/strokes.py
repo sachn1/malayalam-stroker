@@ -1,24 +1,4 @@
-"""malayalam_stroker.strokes
-
-Shape Malayalam (or any HarfBuzz-supported script) text against a font and
-extract each shaped glyph's outline as SVG path data, in left-to-right
-visual order. Built on fontTools + uharfbuzz: shaping handles conjunct/
-ligature collapse and vowel-sign reordering correctly; fontTools pulls the
-real glyph outlines out of the font.
-
-Pairs with the malayalam-stroker JS package, which animates the output as
-a stroke-trace "draw-on" widget — but the JSON shape here is plain and
-font/runtime-agnostic, so it's useful on its own (stroke-order datasets,
-glyph-outline analysis, etc).
-
-    from malayalam_stroker import shape_word
-    trace = shape_word("നന്ദി", "/path/to/font.ttf")
-    trace["glyphs"][0]["d"]   # SVG path 'd' string, y-down
-
-Unlike the original linguaalayam-internal version this is forked from,
-this is font-agnostic (no bundled/hardcoded font) and not tied to any
-single web framework.
-"""
+"""Shape Malayalam text against a font and extract per-glyph SVG path data."""
 
 from __future__ import annotations
 
@@ -31,16 +11,18 @@ from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 
-__all__ = ["shape_word", "Glyph", "StrokeTrace", "MAX_WORD_LENGTH"]
+__all__ = ["MAX_WORD_LENGTH", "Glyph", "StrokeTrace", "shape_word"]
 
-_FLIP = (1, 0, 0, -1, 0, 0)  # font space is y-up; SVG is y-down
+# Font space is y-up; SVG is y-down — flip the y axis.
+_FLIP = (1, 0, 0, -1, 0, 0)
 
-# Soft ceiling on shapeable input. Override by calling _shape_word_uncached
-# directly if you genuinely need longer strings (full sentences, etc).
+#: Soft ceiling on shapeable input length.
 MAX_WORD_LENGTH = 200
 
 
 class Glyph(TypedDict):
+    """Shaped glyph with its SVG outline and pen position."""
+
     glyphName: str
     cluster: int
     d: str
@@ -49,6 +31,8 @@ class Glyph(TypedDict):
 
 
 class StrokeTrace(TypedDict):
+    """Full shaping result for one input string."""
+
     unitsPerEm: int
     ascent: int
     descent: int
@@ -57,15 +41,16 @@ class StrokeTrace(TypedDict):
 
 
 class _ShapingFont:
-    """A font's outlines plus a HarfBuzz shaper, loaded once and reused."""
+    """Font outlines plus a HarfBuzz shaper, loaded once and reused."""
 
     def __init__(self, path: Path) -> None:
+        """Load font metrics, glyph set, and HarfBuzz face from *path*."""
         tt = TTFont(str(path))
         self.glyph_set = tt.getGlyphSet()
         self.glyph_order = tt.getGlyphOrder()
-        self.units_per_em = tt["head"].unitsPerEm
-        self.ascent = tt["hhea"].ascent
-        self.descent = tt["hhea"].descent
+        self.units_per_em: int = tt["head"].unitsPerEm
+        self.ascent: int = tt["hhea"].ascent
+        self.descent: int = tt["hhea"].descent
 
         blob = hb.Blob.from_file_path(str(path))
         self.hb_font = hb.Font(hb.Face(blob))
@@ -73,17 +58,12 @@ class _ShapingFont:
 
 @lru_cache(maxsize=16)
 def _font(resolved_path: str) -> _ShapingFont:
-    """Load a font once per resolved path and keep it resident.
-
-    Cache key is the resolved path string (lru_cache needs hashable args;
-    Path objects are hashable too, but normalising to str avoids surprises
-    if callers pass equivalent-but-distinct Path instances).
-    """
+    """Return a cached ``_ShapingFont`` for *resolved_path*."""
     return _ShapingFont(Path(resolved_path))
 
 
-def _glyph_path_d(glyph_set, glyph_name: str) -> str:
-    """SVG path 'd' string for one glyph, flipped into SVG's y-down space."""
+def _glyph_path_d(glyph_set: object, glyph_name: str) -> str:
+    """Return the SVG ``d`` string for *glyph_name*, flipped into y-down space."""
     svg_pen = SVGPathPen(glyph_set)
     transform_pen = TransformPen(svg_pen, _FLIP)
     glyph_set[glyph_name].draw(transform_pen)
@@ -92,6 +72,7 @@ def _glyph_path_d(glyph_set, glyph_name: str) -> str:
 
 @lru_cache(maxsize=4096)
 def _shape_word_cached(font_path: str, word: str) -> StrokeTrace:
+    """Shape *word* with HarfBuzz and extract per-glyph SVG outlines (cached)."""
     font = _font(font_path)
     buf = hb.Buffer()
     buf.add_str(word)
@@ -101,6 +82,7 @@ def _shape_word_cached(font_path: str, word: str) -> StrokeTrace:
     glyphs: list[Glyph] = []
     pen_x = pen_y = 0.0
     path_cache: dict[str, str] = {}
+
     for info, pos in zip(buf.glyph_infos, buf.glyph_positions):
         name = font.glyph_order[info.codepoint]
         if name not in path_cache:
@@ -127,15 +109,31 @@ def _shape_word_cached(font_path: str, word: str) -> StrokeTrace:
 
 
 def shape_word(word: str, font_path: str | Path) -> StrokeTrace:
-    """Shape `word` against the font at `font_path` and return stroke-trace
-    path data.
+    """Shape *word* against the font at *font_path* and return stroke-trace data.
 
-    Results are cached per (font_path, word): shaping + outline extraction
-    is the only non-trivial cost, and the same words/fonts tend to repeat
-    in real usage. Raises ValueError for empty input or input over
-    MAX_WORD_LENGTH. Raises OSError/fontTools errors if the font can't be
-    read — those aren't caught here, since a missing/corrupt font is a
-    setup problem the caller needs to see, not silently swallow.
+    Results are cached per ``(font_path, word)``.  Shaping and outline
+    extraction are the only non-trivial costs; the same words and fonts
+    typically repeat in real usage.
+
+    Parameters
+    ----------
+    word : str
+        Non-empty Malayalam (or other HarfBuzz-supported) text.
+    font_path : str or Path
+        Path to a TrueType or OpenType font file.
+
+    Returns
+    -------
+    StrokeTrace
+        Dictionary with ``unitsPerEm``, ``ascent``, ``descent``,
+        ``totalAdvance``, and ``glyphs`` (list of :class:`Glyph`).
+
+    Raises
+    ------
+    ValueError
+        If *word* is empty or exceeds :data:`MAX_WORD_LENGTH`.
+    OSError
+        If the font file cannot be read (propagated from fontTools).
     """
     if not word:
         raise ValueError("word must not be empty")

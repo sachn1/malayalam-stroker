@@ -40,37 +40,32 @@ _CHILLU = "ൻർൽൾൺ"
 _NUMERALS = "൦൧൨൩൪൫൬൭൮൯"
 
 # Characters above that can be shaped as one long string
-_STANDALONE = (
-    _INDEPENDENT_VOWELS
-    + _REGULAR_CONSONANTS
-    + _SPECIAL_CONSONANTS
-    + _CHILLU
-    + _NUMERALS
-)
+_STANDALONE = _INDEPENDENT_VOWELS + _REGULAR_CONSONANTS + _SPECIAL_CONSONANTS + _CHILLU + _NUMERALS
 
 # Dependent vowel signs (12) + anusvara + visarga + virama — shaped with ക
 # as a carrier so the shaper emits the matra glyph. The recorder deduplicates
 # by glyphName so ക only appears once across all traces.
 _MATRA_SYLLABLES = [
-    "കാ",   # aa sign  ാ
-    "കി",   # i sign   ി
-    "കീ",   # ii sign  ീ
-    "കു",   # u sign   ു
-    "കൂ",   # uu sign  ൂ
-    "കൃ",   # vocalic-r sign ൃ
-    "കെ",   # e sign   െ
-    "കേ",   # ee sign  േ
-    "കൈ",   # ai sign  ൈ
-    "കൊ",   # o sign   ൊ
-    "കോ",   # oo sign  ോ
-    "കൗ",   # au sign  ൗ
-    "കം",   # anusvara ം  (15th independent vowel form)
-    "കഃ",   # visarga  ഃ  (15th independent vowel form)
-    "ക്",   # virama / chandrakkala ്
+    "കാ",  # aa sign  ാ
+    "കി",  # i sign   ി
+    "കീ",  # ii sign  ീ
+    "കു",  # u sign   ു
+    "കൂ",  # uu sign  ൂ
+    "കൃ",  # vocalic-r sign ൃ
+    "കെ",  # e sign   െ
+    "കേ",  # ee sign  േ
+    "കൈ",  # ai sign  ൈ
+    "കൊ",  # o sign   ൊ
+    "കോ",  # oo sign  ോ
+    "കൗ",  # au sign  ൗ
+    "കം",  # anusvara ം  (15th independent vowel form)  # noqa: RUF003
+    "കഃ",  # visarga  ഃ  (15th independent vowel form)
+    "ക്",  # virama / chandrakkala ്
 ]
 
 
 def _cmd_shape(args: argparse.Namespace) -> int:
+    """Shape one or more words and print a JSON array to stdout."""
     results = []
     for word in args.words:
         try:
@@ -85,17 +80,7 @@ def _cmd_shape(args: argparse.Namespace) -> int:
 
 
 def _cmd_alphabet(args: argparse.Namespace) -> int:
-    """Shape the full Malayalam character set and print a JSON array.
-
-    Output is an array of StrokeTrace objects — one for the combined
-    standalone characters, plus one per matra syllable.  The stroke
-    recorder deduplicates by glyphName across all of them, so each
-    unique glyph shape appears exactly once.
-
-    Approximate glyph count after deduplication (~70 total):
-      13 independent vowels + 33 regular consonants + 3 special +
-      5 chillu + 10 numerals + 12 matra signs + anusvara + visarga + virama
-    """
+    """Shape the full Malayalam character inventory and print a JSON array."""
     results = []
 
     # All standalone characters shaped as one long string
@@ -120,6 +105,18 @@ def _cmd_alphabet(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse CLI arguments and dispatch to the appropriate sub-command.
+
+    Parameters
+    ----------
+    argv : list[str] or None
+        Argument list; defaults to ``sys.argv[1:]`` when ``None``.
+
+    Returns
+    -------
+    int
+        Exit code (0 = success, 1 = error).
+    """
     parser = argparse.ArgumentParser(
         prog="malayalam_stroker",
         description="Shape Malayalam text and print stroke-trace JSON.",
@@ -148,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.print_help()
             return 0
         # Re-parse as implicit "shape"
-        args = parser.parse_args(["shape"] + remaining)
+        args = parser.parse_args(["shape", *remaining])
 
     if args.cmd == "alphabet":
         return _cmd_alphabet(args)
