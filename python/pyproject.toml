@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "malayalam-stroker"
+version = "0.1.0"
+description = "Shape Malayalam text and extract per-glyph SVG stroke paths for stroke-order / handwriting-trace widgets"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "your-name-here" }]
+keywords = ["malayalam", "stroke-order", "handwriting", "harfbuzz", "svg", "indic"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Text Processing :: Fonts",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+    "fonttools>=4.62",
+    "uharfbuzz>=0.55",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-username/malayalam-stroker"
+Repository = "https://github.com/your-username/malayalam-stroker"
+
+[project.scripts]
+malayalam-stroker = "malayalam_stroker.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/malayalam_stroker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

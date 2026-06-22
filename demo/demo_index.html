@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>malayalam-stroker — interactive demo</title>
+  <link rel="stylesheet" href="../js/src/style.css" />
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 520px;
+      margin: 3rem auto;
+      text-align: center;
+      --ms-ink-color: #1a1a2e;
+      --ms-ghost-color: #e0daf5;
+      --ms-stylus-color: #e8b84b;
+      color: #1a1a2e;
+    }
+    p.sub { color: #6b6591; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    form { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    input[type="text"] {
+      flex: 1;
+      font: inherit;
+      font-size: 1.4rem;
+      padding: 0.4rem 0.8rem;
+      border: 1px solid #e0daf5;
+      border-radius: 8px;
+      text-align: center;
+    }
+    button {
+      font: inherit;
+      padding: 0.5rem 1.2rem;
+      border-radius: 8px;
+      border: none;
+      background: #af95db;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:hover { background: #6d28d9; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .chips { margin-bottom: 1rem; font-size: 0.85rem; }
+    .chips button {
+      background: none; color: #6d28d9;
+      border: 1px solid #e0daf5;
+      padding: 0.2rem 0.6rem; margin: 0.15rem;
+      font-size: 0.9rem;
+    }
+    .chips button:hover { background: #f3f0fb; }
+    #stage {
+      border: 1px solid #e0daf5;
+      border-radius: 12px;
+      padding: 1.5rem;
+      min-height: 160px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #stage svg { width: 100%; height: auto; max-height: 200px; overflow: visible; }
+    #status { color: #b00020; font-size: 0.82rem; min-height: 1.1rem; margin-bottom: 0.5rem; }
+    #replay { margin-top: 1rem; background: none; color: #6d28d9; border: 1px solid #af95db; }
+  </style>
+</head>
+<body>
+  <h1>malayalam-stroker</h1>
+  <p class="sub">Type any word and watch it be written.</p>
+
+  <form id="traceForm">
+    <input id="wordInput" type="text" value="നന്ദി" lang="ml" autocomplete="off" />
+    <button type="submit" id="traceBtn">Trace</button>
+  </form>
+
+  <div class="chips">
+    Try: &nbsp;
+    <button type="button" data-word="നന്ദി">നന്ദി</button>
+    <button type="button" data-word="മലയാളം">മലയാളം</button>
+    <button type="button" data-word="ആലയം">ആലയം</button>
+    <button type="button" data-word="ക്ഷമിക്കണം">ക്ഷമിക്കണം</button>
+    <button type="button" data-word="സ്നേഹം">സ്നേഹം</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="stage"></div>
+  <button id="replay" type="button">↺ Replay</button>
+
+  <script type="module">
+    import { createStrokeWriter } from "../js/src/index.js";
+
+    const writer = createStrokeWriter(document.getElementById("stage"));
+    const form   = document.getElementById("traceForm");
+    const input  = document.getElementById("wordInput");
+    const status = document.getElementById("status");
+    const btn    = document.getElementById("traceBtn");
+
+    async function traceWord(word) {
+      word = word.trim();
+      if (!word) return;
+      status.textContent = "";
+      btn.disabled = true;
+      try {
+        const res  = await fetch("/api/shape/" + encodeURIComponent(word));
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || "shaping failed");
+        await writer.play(body);
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    form.addEventListener("submit", e => { e.preventDefault(); traceWord(input.value); });
+    document.querySelectorAll(".chips button").forEach(b =>
+      b.addEventListener("click", () => { input.value = b.dataset.word; traceWord(input.value); })
+    );
+    document.getElementById("replay").addEventListener("click", () => writer.replay());
+
+    traceWord(input.value);
+  </script>
+</body>
+</html>

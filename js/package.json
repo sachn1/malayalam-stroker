@@ -1,0 +1,35 @@
+{
+  "name": "malayalam-stroker",
+  "version": "0.1.0",
+  "description": "Animated stroke-trace widget for Malayalam (or any script) — renders the JSON produced by the malayalam-stroker Python package as a left-to-right ink reveal",
+  "type": "module",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./src/index.js",
+    "./style.css": "./src/style.css"
+  },
+  "keywords": [
+    "malayalam",
+    "stroke-order",
+    "handwriting",
+    "svg",
+    "indic",
+    "harfbuzz"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/malayalam-stroker"
+  },
+  "homepage": "https://github.com/your-username/malayalam-stroker#readme",
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14"
+  }
+}

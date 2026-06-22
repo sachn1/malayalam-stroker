@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>malayalam-stroker demo</title>
+  <link rel="stylesheet" href="../src/style.css" />
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 480px;
+      margin: 3rem auto;
+      text-align: center;
+      --ms-ink-color: #1a1a2e;
+      --ms-ghost-color: #e0daf5;
+    }
+    #stage {
+      border: 1px solid #e0daf5;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+    }
+    #stage svg { width: 100%; height: auto; max-height: 220px; overflow: visible; }
+    button {
+      font: inherit;
+      padding: 0.5rem 1.2rem;
+      border-radius: 8px;
+      border: none;
+      background: #af95db;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:hover { background: #6d28d9; }
+  </style>
+</head>
+<body>
+  <h1>malayalam-stroker</h1>
+  <p>Word: <strong>മലയാളം</strong> (malayāḷam) — JSON pre-shaped with the Python package, animated here with the JS package.</p>
+  <div id="stage"></div>
+  <button id="replay">↺ Replay</button>
+
+  <script type="module">
+    import { createStrokeWriter } from "../src/index.js";
+
+    const writer = createStrokeWriter(document.getElementById("stage"));
+
+    const trace = await fetch("./sample-trace.json").then((r) => r.json());
+    writer.play(trace);
+
+    document.getElementById("replay").addEventListener("click", () => writer.replay());
+  </script>
+</body>
+</html>
