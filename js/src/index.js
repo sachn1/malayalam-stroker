@@ -21,7 +21,7 @@
  * @module malayalam-stroker
  */
 
-const SVGNS = "http://www.w3.org/2000/svg"\;
+const SVGNS = "http://www.w3.org/2000/svg";
 
 /** Number of sample points used when resampling an outline subpath. */
 const OUTLINE_SAMPLES = 200;
