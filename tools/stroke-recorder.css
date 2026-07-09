@@ -242,6 +242,19 @@ button.danger:hover:not(:disabled) {
   background: #fff1f2;
 }
 
+/* ── Eraser button ── */
+
+button#eraser-btn.active {
+  background: #fef2f2;
+  border-color: #e53e3e;
+  color: #e53e3e;
+}
+
+#canvas-wrap.eraser-active {
+  cursor: cell !important;
+  border-color: #fca5a5;
+}
+
 /* ── Add custom cluster row ── */
 
 .add-cluster {
@@ -273,6 +286,18 @@ button.danger:hover:not(:disabled) {
   align-items: center;
   gap: 0.6rem;
   margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: #6b6591;
+}
+
+/* ── Load section (recorder panel) ── */
+
+.load-section {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
   flex-wrap: wrap;
   font-size: 0.82rem;
   color: #6b6591;

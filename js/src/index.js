@@ -29,6 +29,19 @@ const OUTLINE_SAMPLES = 200;
 /** Pause between consecutive strokes of one glyph (milliseconds). */
 const PEN_LIFT_MS = 120;
 
+/**
+ * Default inter-cluster tightening, as a fraction of unitsPerEm, trimmed from
+ * each cluster's advance before accumulating pen position.
+ *
+ * The font's advance width bakes in a trailing sidebearing gap — measured at
+ * a near-constant ~200/2048 em-units across this font's glyphs regardless of
+ * glyph width, rather than a proportional amount — that reads as too loose
+ * for this handwriting-trace UI. Trimming a fraction of it tightens
+ * inter-character spacing without touching any cluster's own internal glyph
+ * layout. Override per writer via `options.tighten` (see createStrokeWriter).
+ */
+const DEFAULT_TIGHTEN_FRACTION = 0.06;
+
 /** Default URL for the bundled glyph data. */
 const GLYPH_DATA_URL = new URL("./glyph-data.json", import.meta.url);
 
@@ -184,31 +197,172 @@ function buildTracePath(pathEl, startOverride, direction) {
 // ---------------------------------------------------------------------------
 
 /**
- * Segment `text` into Unicode clusters using longest-match lookup.
+ * Compose a base cluster entry with a trailing mark's prefix/suffix recipe.
  *
- * Tries 3-char conjunct → 2-char consonant+matra → 1-char. Unknown
- * codepoints are silently skipped.
+ * @param {{ glyphs: {d: string, x: number, y: number}[], advance: number }} base
+ * @param {{ shift: number, prefix: object[], suffix: object[], trailingWidth: number }} mark
+ * @returns {{ glyphs: {d: string, x: number, y: number}[], advance: number }}
+ */
+function composeMark(base, mark) {
+  const glyphs = [
+    ...mark.prefix.map((p) => ({ d: p.d, x: p.x, y: p.y })),
+    ...base.glyphs.map((g) => ({ d: g.d, x: g.x + mark.shift, y: g.y })),
+    ...mark.suffix.map((s) => ({ d: s.d, x: mark.shift + base.advance + s.x, y: s.y })),
+  ];
+  return { glyphs, advance: mark.shift + base.advance + mark.trailingWidth };
+}
+
+/**
+ * Offset every absolute coordinate in an SVG path's `d` string by (dx, dy).
+ * Mirrors tools/.../stroke_compose.py's `offset_svg_path` exactly — same
+ * regex-based approach, needed here to compose *stroke* paths at runtime
+ * the same way {@link composeMark} composes glyph outlines.
+ *
+ * @param {string} d
+ * @param {number} dx
+ * @param {number} dy
+ * @returns {string}
+ */
+function offsetSvgPath(d, dx, dy) {
+  if (dx === 0 && dy === 0) return d;
+  return d.replace(/([MLCSQTHVmlcsqthv])\s*([-\d.e]+(?:\s+[-\d.e]+)*)/g, (_, cmd, coordStr) => {
+    const coords = coordStr.trim().split(/\s+/).map(Number);
+    const upper = cmd.toUpperCase();
+    let shifted;
+    if (upper === "H") shifted = coords.map((v) => v + dx);
+    else if (upper === "V") shifted = coords.map((v) => v + dy);
+    else shifted = coords.map((v, i) => (i % 2 === 0 ? v + dx : v + dy));
+    return `${cmd} ${shifted.map((v) => v.toFixed(1)).join(" ")}`;
+  });
+}
+
+/**
+ * Compose a base cluster's *strokes* (not glyph outlines) with a trailing
+ * mark's own recorded stroke, using the same shift/prefix/suffix recipe as
+ * {@link composeMark}. This is what lets `stroke-data.json` stay small (just
+ * the hand-authored + per-glyph-composed base) instead of pre-baking every
+ * mark combination — the same principle already applied to `glyph-data.json`
+ * via runtime composition, extended to strokes.
+ *
+ * Returns `null` for compound marks (both prefix and suffix parts) — only
+ * one recorded stroke exists for those, and it can't be cleanly offset
+ * without also warping the gap in the middle to match the base's width.
+ *
+ * @param {{d: string}[]} baseStrokes
+ * @param {{ shift: number, prefix: object[], suffix: object[], trailingWidth: number }} mark
+ * @param {{d: string}[]} markStrokes
+ * @param {number} baseAdvance
+ * @returns {{d: string}[] | null}
+ */
+function composeMarkStroke(baseStrokes, mark, markStrokes, baseAdvance) {
+  if (mark.prefix.length > 0 && mark.suffix.length > 0) return null;
+  const shift = mark.shift;
+  const composed = baseStrokes.map((s) => ({ d: offsetSvgPath(s.d, shift, 0) }));
+  if (mark.prefix.length > 0) {
+    return [...markStrokes.map((s) => ({ d: s.d })), ...composed];
+  }
+  const dx = shift + baseAdvance;
+  return [...composed, ...markStrokes.map((s) => ({ d: offsetSvgPath(s.d, dx, 0) }))];
+}
+
+/**
+ * Try composing a stroke for `cluster` from a shorter base already in
+ * {@link STROKE_LIBRARY} plus a trailing mark's own recorded stroke —
+ * mirrors {@link resolveSegments}'s glyph-level composition, one level up.
+ * Composed results are cached into `STROKE_LIBRARY` under `cluster` so
+ * repeated traces of the same word don't recompose it.
+ *
+ * @param {string} cluster
+ * @param {{ clusters: Record<string, object>, marks: Record<string, object> }} glyphData
+ * @returns {{ strokes: {d: string}[] } | null}
+ */
+function tryComposeStroke(cluster, glyphData) {
+  const { clusters, marks } = glyphData;
+  for (const markLen of [2, 1]) {
+    if (cluster.length <= markLen) continue;
+    const baseKey = cluster.slice(0, -markLen);
+    const markKey = cluster.slice(-markLen);
+    const base = STROKE_LIBRARY[baseKey];
+    const mark = marks?.[markKey];
+    const markEntry = STROKE_LIBRARY[markKey];
+    const baseGlyphEntry = clusters[baseKey];
+    if (!base?.strokes?.length || !mark || !markEntry?.strokes?.length || !baseGlyphEntry) continue;
+    const strokes = composeMarkStroke(base.strokes, mark, markEntry.strokes, baseGlyphEntry.advance);
+    if (strokes) {
+      const entry = { strokes };
+      STROKE_LIBRARY[cluster] = entry;
+      return entry;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve `text` into an ordered list of `{ cluster, entry }` pairs.
+ *
+ * Tries a direct longest-match lookup first (4-char conjunct+matra → 3-char
+ * conjunct → 2-char consonant+matra → 1-char). A character with no direct
+ * match at any length — necessarily a mark, since a real base always has at
+ * least a 1-char entry — is composed onto the *previously matched* segment
+ * (base and mark are adjacent by construction, so "the segment just pushed"
+ * is exactly the base this mark attaches to) — see {@link composeMark}. Mark
+ * lookup tries a 2-char tail first (subjoined conjunct forms — virama plus a
+ * reduced ya/va/la, e.g. "്യ") before falling back to 1-char (virama or a
+ * dependent vowel sign alone), same longest-match precedence as direct
+ * cluster lookups. Some marks (ു/ൂ/ൃ, and subjoined la) fuse into a glyph
+ * unique to the specific preceding consonant in real shaping — composing
+ * them generically can't reproduce that exact fused glyph, so they render
+ * as the base's own glyph plus the mark's separate standalone shape
+ * instead: less tightly kerned than a true font ligature, but still correct
+ * and legible (see glyphData.marks / tools/build_glyph_data.py's
+ * _build_marks() docstring for the full derivation). Composition is skipped
+ * only for marks with a prefix component when the base is more than one
+ * glyph — that reordering isn't safe on a non-ligating multi-glyph
+ * conjunct. A mark with nothing to attach to (no previous segment, or that
+ * unsupported prefix+multi-glyph case) is skipped with a console warning.
  *
  * @param {string} text
  * @param {Record<string, unknown>} clusters - The `clusters` map from glyph-data.json.
- * @returns {string[]} Ordered list of matched cluster strings.
+ * @param {Record<string, unknown>} marks - The `marks` map from glyph-data.json.
+ * @returns {{ cluster: string, entry: { glyphs: object[], advance: number } }[]}
  */
-function segmentText(text, clusters) {
+function resolveSegments(text, clusters, marks) {
   const segs = [];
   let i = 0;
   while (i < text.length) {
-    if (i + 2 < text.length && clusters[text.slice(i, i + 3)]) {
-      segs.push(text.slice(i, i + 3));
-      i += 3;
-    } else if (i + 1 < text.length && clusters[text.slice(i, i + 2)]) {
-      segs.push(text.slice(i, i + 2));
-      i += 2;
-    } else if (clusters[text[i]]) {
-      segs.push(text[i]);
-      i++;
-    } else {
-      i++;
+    let matched = false;
+    for (const len of [4, 3, 2, 1]) {
+      if (i + len > text.length) continue;
+      const slice = text.slice(i, i + len);
+      if (clusters[slice]) {
+        segs.push({ cluster: slice, entry: clusters[slice] });
+        i += len;
+        matched = true;
+        break;
+      }
     }
+    if (matched) continue;
+
+    let composed = false;
+    for (const markLen of [2, 1]) {
+      if (i + markLen > text.length) continue;
+      const markCh = text.slice(i, i + markLen);
+      const mark = marks[markCh];
+      const prev = segs[segs.length - 1];
+      if (!mark || !prev) continue;
+      if (mark.prefix.length > 0 && prev.entry.glyphs.length > 1) continue;
+      segs[segs.length - 1] = {
+        cluster: prev.cluster + markCh,
+        entry: composeMark(prev.entry, mark),
+      };
+      i += markLen;
+      composed = true;
+      break;
+    }
+    if (composed) continue;
+
+    console.warn(`malayalam-stroker: no glyph data for ${JSON.stringify(text[i])} in ${JSON.stringify(text)} — skipping`);
+    i++;
   }
   return segs;
 }
@@ -221,13 +375,22 @@ function segmentText(text, clusters) {
  * Create a stroke-writer bound to `container`.
  *
  * @param {HTMLElement} container - The DOM element that will hold the SVG stage.
- * @param {{ speed?: number, glyphData?: object }} [options]
+ * @param {{ speed?: number, glyphData?: object, tighten?: number }} [options]
  * @param {number} [options.speed=6000] - Nominal pen speed in font-units per second.
  * @param {object} [options.glyphData=null] - Pre-loaded glyph data object (skips `load()`).
+ * @param {number} [options.tighten=0.06] - Inter-cluster tightening, as a fraction of
+ *   unitsPerEm trimmed from each cluster's advance. 0 reproduces the font's raw spacing;
+ *   higher values pull characters closer together. See {@link DEFAULT_TIGHTEN_FRACTION}.
+ * @param {boolean} [options.outlineOnly=false] - Ignore {@link STROKE_LIBRARY} entirely and
+ *   always animate the outer-contour outline fallback, even for clusters with authored
+ *   strokes. Useful for a consistent tracing style independent of authoring coverage
+ *   (e.g. a wordmark mixing authored and not-yet-authored clusters).
  * @returns {{ load: Function, loadStrokes: Function, play: Function, replay: Function, cancel: Function, destroy: Function }}
  */
 export function createStrokeWriter(container, options = {}) {
   const SPEED = options.speed ?? 6000;
+  const TIGHTEN = options.tighten ?? DEFAULT_TIGHTEN_FRACTION;
+  const OUTLINE_ONLY = options.outlineOnly ?? false;
   const state = { playToken: 0 };
   let glyphData = options.glyphData ?? null;
   let lastText = null;
@@ -286,21 +449,20 @@ export function createStrokeWriter(container, options = {}) {
    */
   function buildTrace(text) {
     if (!glyphData) throw new Error("Call writer.load() before writer.play()");
-    const { meta, clusters } = glyphData;
-    const segs = segmentText(text, clusters);
+    const { meta, clusters, marks } = glyphData;
+    const segs = resolveSegments(text, clusters, marks ?? {});
     if (!segs.length) return null;
 
+    const tightenUnits = TIGHTEN * meta.unitsPerEm;
     let penX = 0;
     const segGroups = [];
-    for (const seg of segs) {
-      const entry = clusters[seg];
-      if (!entry) continue;
+    for (const { cluster, entry } of segs) {
       segGroups.push({
-        cluster: seg,
+        cluster,
         components: entry.glyphs.map((g) => ({ d: g.d, x: penX + g.x, y: g.y })),
         groupX: penX,
       });
-      penX += entry.advance;
+      penX += Math.max(0, entry.advance - tightenUnits);
     }
 
     return {
@@ -349,7 +511,9 @@ export function createStrokeWriter(container, options = {}) {
     svg.appendChild(stylus);
 
     const glyphUnits = segGroups.map((grp) => {
-      const authored = STROKE_LIBRARY[grp.cluster];
+      const authored = OUTLINE_ONLY
+        ? null
+        : (STROKE_LIBRARY[grp.cluster] ?? tryComposeStroke(grp.cluster, glyphData));
 
       // Authored path: one group element translated to the cluster origin.
       if (authored?.strokes?.length) {
@@ -381,7 +545,10 @@ export function createStrokeWriter(container, options = {}) {
         const subDs = splitSubpaths(c.d);
         const isOuter = classifySubpaths(subDs, scratch);
         return subDs.flatMap((subD, i) => {
-          if (!isOuter[i]) return [];
+          // Normally only the outer contour is traced (inner counters/holes
+          // are skipped as separate pen-strokes). outlineOnly requests the
+          // full accurate outline instead, so trace every subpath.
+          if (!OUTLINE_ONLY && !isOuter[i]) return [];
           scratch.setAttribute("d", subD);
           const td = buildTracePath(
             scratch,

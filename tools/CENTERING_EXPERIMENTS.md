@@ -110,3 +110,24 @@ stroke point sequences to corrected ones. Requires labelled data.
 Add a live skeleton overlay to `stroke-recorder.html` so the labeller can see
 the medial axis while drawing and aim for it directly. Removes the need for
 post-processing correction entirely.
+
+---
+
+## Resolution — Gradient Ascent (adopted)
+
+A variant of B that turned out to work: rather than snapping to the
+skeleton or projecting onto the outline, walk each stroke point a small,
+fixed number of steps *up the gradient* of the distance-transform field
+(toward higher "depth inside the ink"). Following the local gradient from a
+point's own neighbourhood — rather than a global nearest-skeleton-pixel
+search — is what avoids the "teleport to the wrong branch near a junction"
+failure that sank Attempts 2–4: the point can only climb the ridge it's
+already closest to, not jump across it.
+
+This is the approach now used in production, consolidated (from the
+`center_strokes_v2.py` / `refine_with_ghost.py` prototypes referenced above)
+into `python/src/malayalam_stroker/centering.py`, and run via
+`tools/process_strokes.py --center`. The exploratory scripts this log
+documents (`center_strokes.py`, `skeleton_strokes.py`, `center_strokes_v2.py`)
+have been removed now that their logic lives in the shared module; this file
+is kept as the record of why the simpler approaches didn't work.

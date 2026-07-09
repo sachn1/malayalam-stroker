@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Jayasree logo — preview</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 700px;
+        margin: 3rem auto;
+        text-align: center;
+      }
+      #logo-stage {
+        min-height: 220px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        --ms-ink-color: #1a1a2e;
+        --ms-stylus-color: #e8b84b;
+        border: 1px solid #e0daf5;
+        border-radius: 12px;
+      }
+      #logo-stage svg {
+        width: auto;
+        height: 220px;
+        overflow: visible;
+      }
+      #logo-stage .ms-ghost path {
+        fill: #a78bfa;
+        fill-opacity: 0.9;
+        stroke: none;
+      }
+      p {
+        color: #6b6591;
+        font-size: 0.85rem;
+      }
+      #timing {
+        font-family: monospace;
+        font-size: 0.8rem;
+        white-space: pre;
+        text-align: left;
+        background: #f8f7fc;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 style="font-size: 1rem">Jayasree logo preview — click to replay</h1>
+    <div id="logo-stage"></div>
+    <p>Click the logo to replay. Timing breakdown below.</p>
+    <div id="timing">(load…)</div>
+
+    <script type="module">
+      import { createStrokeWriter } from "../js/src/index.js";
+
+      const logoStage = document.getElementById("logo-stage");
+      const timingEl = document.getElementById("timing");
+      const logoWriter = createStrokeWriter(logoStage, { speed: 42000, outlineOnly: true });
+
+      async function playLogoWithReveal(trigger) {
+        const t0 = performance.now();
+        const tracePromise = trigger();
+        const svg = logoStage.querySelector("svg");
+        const ghost = svg?.querySelector(".ms-ghost");
+        let clipRect = null;
+
+        if (ghost) {
+          const bbox = ghost.getBBox();
+          const svgns = "http://www.w3.org/2000/svg";
+          const clipPath = document.createElementNS(svgns, "clipPath");
+          clipPath.id = "logo-reveal-clip";
+          clipRect = document.createElementNS(svgns, "rect");
+          clipRect.setAttribute("x", String(bbox.x));
+          clipRect.setAttribute("y", String(bbox.y - 4));
+          clipRect.setAttribute("width", "0");
+          clipRect.setAttribute("height", String(bbox.height + 8));
+          clipPath.appendChild(clipRect);
+          svg.appendChild(clipPath);
+          ghost.setAttribute("clip-path", "url(#logo-reveal-clip)");
+        }
+
+        await tracePromise;
+        const t1 = performance.now();
+
+        if (clipRect) {
+          const bbox = ghost.getBBox();
+          const duration = 650;
+          const start = performance.now();
+          const step = (now) => {
+            const t = Math.min(1, (now - start) / duration);
+            const eased = 1 - (1 - t) ** 3;
+            clipRect.setAttribute("width", String(bbox.width * eased));
+            if (t < 1) {
+              requestAnimationFrame(step);
+            } else {
+              const t2 = performance.now();
+              timingEl.textContent =
+                `outline draw:  ${(t1 - t0).toFixed(0)} ms\n` +
+                `fill reveal:   ${(t2 - t1).toFixed(0)} ms\n` +
+                `total:         ${(t2 - t0).toFixed(0)} ms`;
+            }
+          };
+          requestAnimationFrame(step);
+        }
+      }
+
+      const t0 = performance.now();
+      await logoWriter.load("../js/src/glyph-data.json");
+      const t1 = performance.now();
+      timingEl.textContent = `glyph-data.json load: ${(t1 - t0).toFixed(0)} ms\n(playing…)`;
+      playLogoWithReveal(() => logoWriter.play("ജയശ്രീ"));
+      logoStage.addEventListener("click", () => playLogoWithReveal(() => logoWriter.replay()));
+    </script>
+  </body>
+</html>

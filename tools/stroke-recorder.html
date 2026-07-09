@@ -10,7 +10,7 @@
     <p class="sub">
       Draw over each ghosted glyph to record how it is written. Each
       pen-down→pen-up gesture becomes one stroke. Export when done and save
-      as <code>js/src/stroke-data.json</code>.
+      as <code>js/src/stroke-data.raw.json</code>.
     </p>
 
     <div id="drop-zone">
@@ -39,11 +39,19 @@
         stroke, in writing order.
       </p>
       <div class="controls">
-        <button id="undo-btn" disabled>↩ Undo</button>
         <button id="clear-btn">✕ Clear</button>
+        <button id="undo-btn" disabled>↩ Undo</button>
+        <button id="redo-btn" disabled>↪ Redo</button>
+        <button id="eraser-btn" title="Erase part of a stroke">🧹 Eraser</button>
         <span id="stroke-count">0 strokes</span>
         <button id="remove-btn" class="danger">Remove</button>
         <button class="primary" id="export-btn">Export JSON</button>
+      </div>
+      <div class="load-section">
+        <span>Load existing strokes:</span>
+        <button id="load-existing-btn">📂 Load stroke-data.raw.json</button>
+        <input type="file" id="existing-file-input" accept=".json" style="display:none" />
+        <span id="merge-status"></span>
       </div>
       <div class="add-cluster">
         <input type="text" id="add-input" placeholder="Add custom cluster, e.g. ന്ന" />
@@ -52,20 +60,16 @@
     </div>
 
     <div id="export-area">
-      <h2>stroke-data.json</h2>
+      <h2>stroke-data.raw.json</h2>
       <p class="sub">
-        Save this as <code>js/src/stroke-data.json</code> and commit it. The
-        demo loads it automatically via <code>writer.loadStrokes()</code>.
+        Save this as <code>js/src/stroke-data.raw.json</code> and commit it,
+        then run <code>python tools/process_strokes.py --preset=malayalam</code>
+        to regenerate <code>js/src/stroke-data.json</code>, which the demo
+        loads automatically via <code>writer.loadStrokes()</code>.
       </p>
-      <div class="merge-section">
-        <span>Append to existing file:</span>
-        <button id="load-existing-btn">📂 Load stroke-data.json</button>
-        <input type="file" id="existing-file-input" accept=".json" style="display:none" />
-        <span id="merge-status"></span>
-      </div>
       <textarea id="export-output" readonly spellcheck="false"></textarea>
       <div class="export-actions">
-        <button id="download-btn" class="primary">⬇ Download stroke-data.json</button>
+        <button id="download-btn" class="primary">⬇ Download stroke-data.raw.json</button>
         <button id="copy-btn">Copy to clipboard</button>
       </div>
     </div>

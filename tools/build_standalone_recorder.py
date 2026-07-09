@@ -4,6 +4,12 @@
 The output can be opened directly in any browser (file://) — no server needed.
 Copy it to your tablet once; it works fully offline.
 
+The generated file embeds a content hash of its stroke-recorder.{html,css,js}
+sources as an HTML comment, so staleness (editing the sources without
+regenerating) is always detectable on demand:
+
+    python tools/build_standalone_recorder.py --check
+
 Usage (from repo root):
     python tools/build_standalone_recorder.py
     # → tools/stroke-recorder-standalone.html
@@ -11,8 +17,10 @@ Usage (from repo root):
 
 from __future__ import annotations
 
-import json
+import argparse
+import hashlib
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,8 +30,18 @@ JS_SRC = ROOT / "tools" / "stroke-recorder.js"
 GLYPH_DATA = ROOT / "js" / "src" / "glyph-data.json"
 OUT = ROOT / "tools" / "stroke-recorder-standalone.html"
 
+_HASH_COMMENT = "<!-- source-hash: {} (do not edit; run tools/build_standalone_recorder.py) -->"
+_HASH_RE = re.compile(r"<!-- source-hash: ([0-9a-f]+)")
 
-def main() -> None:
+
+def _source_hash() -> str:
+    """Hash the three stroke-recorder source files together."""
+    combined = HTML_SRC.read_bytes() + CSS_SRC.read_bytes() + JS_SRC.read_bytes()
+    return hashlib.sha256(combined).hexdigest()[:16]
+
+
+def build() -> None:
+    """Regenerate tools/stroke-recorder-standalone.html from current sources."""
     html = HTML_SRC.read_text(encoding="utf-8")
     css = CSS_SRC.read_text(encoding="utf-8")
     js = JS_SRC.read_text(encoding="utf-8")
@@ -61,10 +79,45 @@ window.addEventListener("DOMContentLoaded", () => {
         html,
     )
 
+    html = re.sub(r"(<html[^>]*>)", rf"\1\n{_HASH_COMMENT.format(_source_hash())}", html, count=1)
+
     OUT.write_text(html, encoding="utf-8")
     size_kb = OUT.stat().st_size / 1024
     print(f"Written {OUT.relative_to(ROOT)}  ({size_kb:.0f} KB)")
     print("Copy this single file to your tablet — opens offline in any browser.")
+
+
+def check() -> None:
+    """Exit non-zero with a clear message if the standalone file is stale."""
+    if not OUT.exists():
+        print(f"STALE: {OUT.relative_to(ROOT)} does not exist yet.", file=sys.stderr)
+        print("Regenerate with: python tools/build_standalone_recorder.py", file=sys.stderr)
+        sys.exit(1)
+
+    existing = OUT.read_text(encoding="utf-8")
+    m = _HASH_RE.search(existing)
+    current = _source_hash()
+    if not m or m.group(1) != current:
+        print(
+            f"STALE: {OUT.relative_to(ROOT)} is out of sync with "
+            "stroke-recorder.{html,css,js}.",
+            file=sys.stderr,
+        )
+        print("Regenerate with: python tools/build_standalone_recorder.py", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"{OUT.relative_to(ROOT)} is in sync with its sources.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check whether the standalone file is in sync instead of regenerating it",
+    )
+    args = parser.parse_args()
+    check() if args.check else build()
 
 
 if __name__ == "__main__":

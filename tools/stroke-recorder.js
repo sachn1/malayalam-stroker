@@ -47,11 +47,26 @@ let previewPath = null;
 const strokeData = {};
 
 /**
- * Existing stroke-data.json loaded for merging at export time.
+ * Existing stroke-data.raw.json loaded for merging at export time.
  *
  * @type {Record<string, { strokes: { d: string }[] }> | null}
  */
 let existingStrokeData = null;
+
+/**
+ * Per-cluster stack of strokes removed by Undo, restorable via Redo.
+ * Cleared for a cluster whenever a new stroke is drawn, or its strokes are
+ * cleared/erased — same rule as any standard undo/redo history.
+ *
+ * @type {Record<string, { d: string }[]>}
+ */
+const redoStacks = {};
+
+/** Whether eraser mode is active. */
+let eraserMode = false;
+
+/** Eraser radius in font units. */
+const ERASER_RADIUS = 30;
 
 // ---------------------------------------------------------------------------
 // SVG helpers
@@ -355,7 +370,7 @@ function renderGlyph() {
 }
 
 /**
- * Refresh the stroke counter and undo-button state.
+ * Refresh the stroke counter and undo/redo-button state.
  */
 function updateCounts() {
   const g = trace.glyphs[glyphIndex];
@@ -363,14 +378,86 @@ function updateCounts() {
   document.getElementById("stroke-count").textContent =
     `${n} stroke${n !== 1 ? "s" : ""} recorded`;
   document.getElementById("undo-btn").disabled = n === 0;
+  document.getElementById("redo-btn").disabled = (redoStacks[g.clusterStr]?.length ?? 0) <= 0;
 }
+
+// ---------------------------------------------------------------------------
+// Eraser helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a smooth SVG path `d` back into sample points for erasing.
+ *
+ * @param {string} d
+ * @returns {{ x: number, y: number }[]}
+ */
+function samplePathPoints(d) {
+  const pts = [];
+  const re = /([MLCS])\s*([-\d.]+(?:\s+[-\d.]+)*)/gi;
+  let m;
+  while ((m = re.exec(d))) {
+    const cmd = m[1].toUpperCase();
+    const nums = m[2].trim().split(/\s+/).map(Number);
+    if (cmd === "M" || cmd === "L") {
+      pts.push({ x: nums[0], y: nums[1] });
+    } else if (cmd === "C") {
+      // Only take the endpoint of each cubic
+      pts.push({ x: nums[4], y: nums[5] });
+    }
+  }
+  return pts;
+}
+
+/**
+ * Erase points near (ex, ey) from all recorded strokes of the current glyph.
+ * Strokes that get split produce multiple new strokes.
+ *
+ * @param {number} ex - Eraser X in font units
+ * @param {number} ey - Eraser Y in font units
+ */
+function eraseAt(ex, ey) {
+  const g = trace.glyphs[glyphIndex];
+  const strokes = strokeData[g.clusterStr];
+  if (!strokes || strokes.length === 0) return;
+
+  const r2 = ERASER_RADIUS * ERASER_RADIUS;
+  const newStrokes = [];
+
+  for (const stroke of strokes) {
+    const pts = samplePathPoints(stroke.d);
+    // Split into runs of points that are outside the eraser
+    let run = [];
+    const runs = [];
+    for (const p of pts) {
+      const dx = p.x - ex;
+      const dy = p.y - ey;
+      if (dx * dx + dy * dy < r2) {
+        if (run.length >= 2) runs.push(run);
+        run = [];
+      } else {
+        run.push(p);
+      }
+    }
+    if (run.length >= 2) runs.push(run);
+
+    for (const r of runs) {
+      newStrokes.push({ d: smoothPath(r) });
+    }
+  }
+
+  strokeData[g.clusterStr] = newStrokes;
+  redoStacks[g.clusterStr] = [];
+}
+
+/** @type {SVGCircleElement | null} */
+let eraserCursor = null;
 
 // ---------------------------------------------------------------------------
 // Drawing event handlers
 // ---------------------------------------------------------------------------
 
 /**
- * Handle pointer-down: start capturing a new stroke.
+ * Handle pointer-down: start capturing a new stroke or erasing.
  *
  * @param {PointerEvent} e
  */
@@ -378,6 +465,33 @@ function onPointerDown(e) {
   e.preventDefault();
   drawingSvg.setPointerCapture(e.pointerId);
   const pt = toSvgPt(drawingSvg, e);
+
+  if (eraserMode) {
+    eraseAt(pt.x, pt.y);
+    eraserCursor = svgEl("circle", {
+      cx: pt.x,
+      cy: pt.y,
+      r: ERASER_RADIUS,
+      fill: "rgba(255,100,100,0.2)",
+      stroke: "#e53e3e",
+      "stroke-width": trace.unitsPerEm * 0.01,
+    });
+    drawingSvg.appendChild(eraserCursor);
+    currentPts = [{ x: pt.x, y: pt.y }]; // reuse to track dragging
+    renderGlyph();
+    // Re-add cursor after re-render
+    eraserCursor = svgEl("circle", {
+      cx: pt.x,
+      cy: pt.y,
+      r: ERASER_RADIUS,
+      fill: "rgba(255,100,100,0.2)",
+      stroke: "#e53e3e",
+      "stroke-width": trace.unitsPerEm * 0.01,
+    });
+    drawingSvg.appendChild(eraserCursor);
+    return;
+  }
+
   currentPts = [{ x: pt.x, y: pt.y }];
 
   previewPath = svgEl("path", {
@@ -392,7 +506,7 @@ function onPointerDown(e) {
 }
 
 /**
- * Handle pointer-move: update the live preview path.
+ * Handle pointer-move: update the live preview path or erase.
  *
  * @param {PointerEvent} e
  */
@@ -400,17 +514,46 @@ function onPointerMove(e) {
   if (!currentPts) return;
   e.preventDefault();
   const pt = toSvgPt(drawingSvg, e);
+
+  if (eraserMode) {
+    eraseAt(pt.x, pt.y);
+    if (eraserCursor) {
+      eraserCursor.remove();
+    }
+    renderGlyph();
+    eraserCursor = svgEl("circle", {
+      cx: pt.x,
+      cy: pt.y,
+      r: ERASER_RADIUS,
+      fill: "rgba(255,100,100,0.2)",
+      stroke: "#e53e3e",
+      "stroke-width": trace.unitsPerEm * 0.01,
+    });
+    drawingSvg.appendChild(eraserCursor);
+    return;
+  }
+
   currentPts.push({ x: pt.x, y: pt.y });
   previewPath.setAttribute("d", smoothPath(downsample(currentPts, MIN_DIST_PREVIEW)));
 }
 
 /**
- * Handle pointer-up: commit the finished stroke.
+ * Handle pointer-up: commit the finished stroke or finish erasing.
  *
  * @param {PointerEvent} e
  */
 function onPointerUp(e) {
   if (!currentPts) return;
+
+  if (eraserMode) {
+    currentPts = null;
+    if (eraserCursor) {
+      eraserCursor.remove();
+      eraserCursor = null;
+    }
+    renderGlyph();
+    return;
+  }
   const pts = downsample(currentPts, MIN_DIST_RECORD);
   currentPts = null;
   previewPath = null;
@@ -423,6 +566,7 @@ function onPointerUp(e) {
   const g = trace.glyphs[glyphIndex];
   if (!strokeData[g.clusterStr]) strokeData[g.clusterStr] = [];
   strokeData[g.clusterStr].push({ d: smoothPath(pts) });
+  redoStacks[g.clusterStr] = [];
   renderGlyph();
 }
 
@@ -481,13 +625,39 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("undo-btn").addEventListener("click", () => {
     const g = trace.glyphs[glyphIndex];
-    strokeData[g.clusterStr]?.pop();
+    const strokes = strokeData[g.clusterStr];
+    if (!strokes || strokes.length === 0) return;
+    const popped = strokes.pop();
+    (redoStacks[g.clusterStr] ??= []).push(popped);
+    renderGlyph();
+  });
+  document.getElementById("redo-btn").addEventListener("click", () => {
+    const g = trace.glyphs[glyphIndex];
+    const stack = redoStacks[g.clusterStr];
+    if (!stack || stack.length === 0) return;
+    if (!strokeData[g.clusterStr]) strokeData[g.clusterStr] = [];
+    strokeData[g.clusterStr].push(stack.pop());
     renderGlyph();
   });
   document.getElementById("clear-btn").addEventListener("click", () => {
     const g = trace.glyphs[glyphIndex];
     strokeData[g.clusterStr] = [];
+    redoStacks[g.clusterStr] = [];
     renderGlyph();
+  });
+
+  // ── Eraser toggle ─────────────────────────────────────────────────────
+  const eraserBtn = document.getElementById("eraser-btn");
+  eraserBtn.addEventListener("click", () => {
+    eraserMode = !eraserMode;
+    eraserBtn.classList.toggle("active", eraserMode);
+    const wrap = document.getElementById("canvas-wrap");
+    wrap.style.cursor = eraserMode ? "crosshair" : "crosshair";
+    if (eraserMode) {
+      wrap.classList.add("eraser-active");
+    } else {
+      wrap.classList.remove("eraser-active");
+    }
   });
 
   document.getElementById("export-btn").addEventListener("click", () => {
@@ -505,7 +675,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("download-btn").addEventListener("click", () => {
     const text = document.getElementById("export-output").value;
-    if (text) downloadText(text, "stroke-data.json");
+    if (text) downloadText(text, "stroke-data.raw.json");
   });
 
   document.getElementById("copy-btn").addEventListener("click", () => {
@@ -529,6 +699,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("remove-btn").addEventListener("click", () => {
     if (!trace || trace.glyphs.length === 0) return;
     const g = trace.glyphs[glyphIndex];
+    if (!confirm(`Remove "${g.clusterStr}" and all its strokes from this session?`)) return;
     delete strokeData[g.clusterStr];
     trace.glyphs.splice(glyphIndex, 1);
     if (glyphIndex >= trace.glyphs.length) glyphIndex = Math.max(0, trace.glyphs.length - 1);
@@ -561,7 +732,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.key === "Enter") document.getElementById("add-btn").click();
   });
 
-  // ── Merge: load an existing stroke-data.json to append to ─────────────
+  // ── Merge: load an existing stroke-data.raw.json to append to ─────────
   document.getElementById("load-existing-btn").addEventListener("click", () => {
     document.getElementById("existing-file-input").click();
   });
@@ -579,7 +750,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const out = document.getElementById("export-output").value;
         if (out) document.getElementById("export-btn").click();
       } catch (err) {
-        alert("Could not load stroke-data.json: " + err.message);
+        alert("Could not load stroke-data.raw.json: " + err.message);
       }
     };
     reader.readAsText(file);

@@ -11,6 +11,40 @@ body {
   color: #1a1a2e;
 }
 
+/* ── Logo (animated ജയശ്രീ masthead) ── */
+
+#logo-stage {
+  min-height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  --ms-ink-color: #1a1a2e;
+  --ms-stylus-color: #e8b84b;
+}
+
+#logo-stage svg {
+  width: auto;
+  height: 90px;
+  overflow: visible;
+}
+
+/* Solid colored letterform instead of the default thin ghost wireframe —
+   a wordmark should stand out, not read as a faint tracing guide. */
+#logo-stage .ms-ghost path {
+  fill: #a78bfa;
+  fill-opacity: 0.9;
+  stroke: none;
+}
+
+p.tagline {
+  color: #6b6591;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  margin: 0.1rem 0 1.2rem;
+}
+
 p.sub {
   color: #6b6591;
   font-size: 0.9rem;
