@@ -29,6 +29,9 @@ const OUTLINE_SAMPLES = 200;
 /** Pause between consecutive strokes of one glyph (milliseconds). */
 const PEN_LIFT_MS = 120;
 
+/** Pause between repeats when `play`/`replay` is given `count > 1` (milliseconds). */
+const REPLAY_PAUSE_MS = 500;
+
 /**
  * Default inter-cluster tightening, as a fraction of unitsPerEm, trimmed from
  * each cluster's advance before accumulating pen position.
@@ -41,6 +44,12 @@ const PEN_LIFT_MS = 120;
  * layout. Override per writer via `options.tighten` (see createStrokeWriter).
  */
 const DEFAULT_TIGHTEN_FRACTION = 0.06;
+
+/**
+ * Default ink line thickness, as a fraction of unitsPerEm. Override per
+ * writer via `options.strokeWidth` (see createStrokeWriter).
+ */
+const DEFAULT_STROKE_WIDTH_FRACTION = 0.022;
 
 /** Default URL for the bundled glyph data. */
 const GLYPH_DATA_URL = new URL("./glyph-data.json", import.meta.url);
@@ -439,6 +448,13 @@ function charDx(ch, targetGx, clusters) {
  * not independent characters side by side — see that function's docstring
  * for the concretely-verified failure mode of ignoring this).
  *
+ * Also bails when any character is a *prefix*-type mark (e.g. െ/േ/ൈ) even
+ * though the count matches: HarfBuzz visually reorders a prefix mark's
+ * glyph *before* its base's, so glyph index no longer matches character
+ * index — see `compose_per_glyph`'s docstring for the concretely-verified
+ * "ടെ" failure this avoids (both characters' strokes landing on top of
+ * each other at the mark's position).
+ *
  * However imperfect the result (no font ligatures, just each atom's own
  * shape offset into place), it's still each atom in the position the font
  * says it belongs — closer to the real word than the plain outline-trace
@@ -450,10 +466,11 @@ function charDx(ch, targetGx, clusters) {
  * @returns {{ strokes: {d: string}[] } | null}
  */
 function tryComposeFromCharacters(cluster, glyphData) {
-  const { clusters } = glyphData;
+  const { clusters, marks } = glyphData;
   const clusterEntry = clusters[cluster];
   const chars = [...cluster];
   if (chars.length < 2 || !clusterEntry || clusterEntry.glyphs.length !== chars.length) return null;
+  if (chars.some((ch) => marks?.[ch]?.prefix?.length > 0)) return null;
 
   const strokes = [];
   for (const [i, ch] of chars.entries()) {
@@ -566,12 +583,14 @@ function resolveSegments(text, clusters, marks) {
  * Create a stroke-writer bound to `container`.
  *
  * @param {HTMLElement} container - The DOM element that will hold the SVG stage.
- * @param {{ speed?: number, glyphData?: object, tighten?: number }} [options]
+ * @param {{ speed?: number, glyphData?: object, tighten?: number, strokeWidth?: number }} [options]
  * @param {number} [options.speed=6000] - Nominal pen speed in font-units per second.
  * @param {object} [options.glyphData=null] - Pre-loaded glyph data object (skips `load()`).
  * @param {number} [options.tighten=0.06] - Inter-cluster tightening, as a fraction of
  *   unitsPerEm trimmed from each cluster's advance. 0 reproduces the font's raw spacing;
  *   higher values pull characters closer together. See {@link DEFAULT_TIGHTEN_FRACTION}.
+ * @param {number} [options.strokeWidth=0.022] - Ink line thickness, as a fraction of
+ *   unitsPerEm. See {@link DEFAULT_STROKE_WIDTH_FRACTION}.
  * @param {boolean} [options.outlineOnly=false] - Ignore {@link STROKE_LIBRARY} entirely and
  *   always animate the outer-contour outline fallback, even for clusters with authored
  *   strokes. Useful for a consistent tracing style independent of authoring coverage
@@ -581,6 +600,7 @@ function resolveSegments(text, clusters, marks) {
 export function createStrokeWriter(container, options = {}) {
   const SPEED = options.speed ?? 6000;
   const TIGHTEN = options.tighten ?? DEFAULT_TIGHTEN_FRACTION;
+  const STROKE_WIDTH_FRACTION = options.strokeWidth ?? DEFAULT_STROKE_WIDTH_FRACTION;
   const OUTLINE_ONLY = options.outlineOnly ?? false;
   const state = { playToken: 0 };
   let glyphData = options.glyphData ?? null;
@@ -696,7 +716,7 @@ export function createStrokeWriter(container, options = {}) {
     defs.appendChild(scratch);
     svg.appendChild(defs);
 
-    const sw = unitsPerEm * 0.022;
+    const sw = unitsPerEm * STROKE_WIDTH_FRACTION;
     const stylus = svgEl("circle", { class: "ms-stylus", r: unitsPerEm * 0.016 });
     stylus.style.opacity = "0";
     svg.appendChild(stylus);
@@ -837,23 +857,16 @@ export function createStrokeWriter(container, options = {}) {
   // ── Public API ────────────────────────────────────────────────────────
 
   /**
-   * Animate `text` from scratch.
+   * Build the stage and trace `text` through it once.
    *
-   * Calls `load()` automatically if glyph data has not been loaded yet.
-   *
-   * @param {string} text - Malayalam (or any supported script) text.
-   * @param {{ speed?: number }} [playOptions]
-   * @param {number} [playOptions.speed=1] - Speed multiplier (>1 = faster).
+   * @param {string} text
+   * @param {number} speedMul
+   * @param {number} token
    * @returns {Promise<void>}
    */
-  async function play(text, playOptions = {}) {
-    if (!glyphData) await load();
-    lastText = text;
+  async function playOnce(text, speedMul, token) {
     const trace = buildTrace(text);
     if (!trace) return;
-
-    const speedMul = playOptions.speed ?? 1;
-    const token = ++state.playToken;
     const { glyphUnits, stylus } = buildStage(trace);
 
     for (const unit of glyphUnits) {
@@ -870,9 +883,38 @@ export function createStrokeWriter(container, options = {}) {
   }
 
   /**
+   * Animate `text` from scratch.
+   *
+   * Calls `load()` automatically if glyph data has not been loaded yet.
+   *
+   * @param {string} text - Malayalam (or any supported script) text.
+   * @param {{ speed?: number, count?: number }} [playOptions]
+   * @param {number} [playOptions.speed=1] - Speed multiplier (>1 = faster).
+   * @param {number} [playOptions.count=1] - Number of times to trace `text` in a row,
+   *   pausing {@link REPLAY_PAUSE_MS} between repeats. A new `play()`/`replay()` call,
+   *   or `cancel()`, stops the sequence before its next repeat.
+   * @returns {Promise<void>}
+   */
+  async function play(text, playOptions = {}) {
+    if (!glyphData) await load();
+    lastText = text;
+    const speedMul = playOptions.speed ?? 1;
+    const count = Math.max(1, playOptions.count ?? 1);
+    const token = ++state.playToken;
+
+    for (let i = 0; i < count; i++) {
+      if (token !== state.playToken) return;
+      await playOnce(text, speedMul, token);
+      if (i < count - 1 && token === state.playToken) {
+        await new Promise((r) => setTimeout(r, REPLAY_PAUSE_MS));
+      }
+    }
+  }
+
+  /**
    * Replay the last traced text.
    *
-   * @param {{ speed?: number }} [options]
+   * @param {{ speed?: number, count?: number }} [options]
    * @returns {Promise<void>}
    */
   function replay(options = {}) {
@@ -893,5 +935,24 @@ export function createStrokeWriter(container, options = {}) {
 
   return { load, loadStrokes, play, replay, cancel, destroy };
 }
+
+/**
+ * Internal functions exposed only for unit testing (see tests/index.test.js).
+ * Not part of the public API — no stability guarantee, may change shape or
+ * disappear without notice. Use {@link createStrokeWriter} for real usage.
+ */
+export const _internal = {
+  composeMark,
+  offsetSvgPath,
+  SPLIT_VOWEL_PARTS,
+  markContentAnchorX,
+  applyMarkStroke,
+  applySequentialMarkStrokes,
+  tryDirectMarkStroke,
+  tryComposeStroke,
+  charDx,
+  tryComposeFromCharacters,
+  resolveSegments,
+};
 
 

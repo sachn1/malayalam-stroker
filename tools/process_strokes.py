@@ -63,10 +63,20 @@ PRESETS: dict[str, dict[str, bool]] = {
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI args, resolving `--preset` defaults for any stage flag left unset.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed arguments, with every stage flag (``center``, ``smooth``,
+        ``straighten``, ``expand``) resolved to an explicit bool.
+    """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--preset", choices=sorted(PRESETS), help="Apply a named default set of stages")
+    parser.add_argument(
+        "--preset", choices=sorted(PRESETS), help="Apply a named default set of stages"
+    )
     parser.add_argument("--center", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--smooth", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--straighten", action=argparse.BooleanOptionalAction, default=None)
@@ -105,7 +115,12 @@ def _reference_glyphs(cluster: str, cluster_info: dict, marks: dict) -> list[dic
     return [glyphs[0]] if mark["prefix"] else [glyphs[-1]]
 
 
-def _process_stroke(d: str, field, refs: list[dict], args: argparse.Namespace) -> str:
+def _process_stroke(
+    d: str,
+    field: centering.DistField | None,
+    refs: list[dict],
+    args: argparse.Namespace,
+) -> str:
     """Run one stroke through the center/smooth/straighten stages, in that order."""
     if args.center or args.smooth:
         pts = geometry.sample_path(d, N_SAMPLES)
@@ -128,11 +143,15 @@ def _process_stroke(d: str, field, refs: list[dict], args: argparse.Namespace) -
 
 
 def main() -> None:
+    """Run the requested stages over `stroke-data.raw.json` and write the output file."""
     args = parse_args()
     args.input = args.input.resolve()
     args.output = args.output.resolve()
     if not (args.center or args.smooth or args.straighten or args.expand):
-        print("Nothing to do — pass --preset=malayalam or at least one stage flag.", file=sys.stderr)
+        print(
+            "Nothing to do — pass --preset=malayalam or at least one stage flag.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     stroke_data: dict = json.loads(args.input.read_text(encoding="utf-8"))

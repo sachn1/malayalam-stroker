@@ -32,53 +32,36 @@ Homepage = "https://github.com/your-username/malayalam-stroker"
 Repository = "https://github.com/your-username/malayalam-stroker"
 
 [project.scripts]
-malayalam-stroker = "malayalam_stroker.__main__:main"
+malayalam-stroker = "malayalam_stroker.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/malayalam_stroker"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=malayalam_stroker --cov-report=term-missing"
 
-[tool.ruff]
-line-length = 100
-target-version = "py310"
+[tool.coverage.run]
+source = ["src/malayalam_stroker"]
 
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "UP",  # pyupgrade
-    "D",   # pydocstyle
-    "N",   # pep8-naming
-    "ANN", # annotations
-    "RUF", # ruff-specific
-]
-ignore = [
-    "D205",   # blank-line-after-summary — conflicts with NumPy 1-liner style
-    "D415",   # ends-with-period
-    "ANN101", # missing self annotation
-    "ANN102", # missing cls annotation
-    "ANN401", # Any type allowed in some positions
-    "E999",   # syntax-error — false positives on multi-line docstrings
-]
 
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
-
-[tool.ruff.lint.isort]
-known-first-party = ["malayalam_stroker"]
+# ruff config lives in the repo-root pyproject.toml (not this file) — see
+# that file's header comment for why.
 
 [tool.interrogate]
+# NumPy docstring format is enforced by ruff's pydocstyle convention above —
+# interrogate only measures presence/coverage, and its own --style option
+# (sphinx/google) doesn't support "numpy" at all; setting it crashed every
+# pre-commit run with "Invalid value for '--style'".
 fail-under = 90
 ignore-init-module = true
 ignore-magic = true
-style = "numpy"
 verbose = 0
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.6.0"
 interrogate = "^1.7.0"
+pytest = "^8.0"
+pytest-cov = "^6.0"
+ruff = "0.9.10"  # pinned to match .pre-commit-config.yaml's ruff-pre-commit rev
 

@@ -1,15 +1,9 @@
-"""Shared stroke-path geometry: sampling, simplification, and corner-aware smoothing.
-
-Used by the stroke-processing pipeline (see ``tools/process_strokes.py``) for
-its smoothing stage, and by ghost-reference straightening for splitting a
-stroke into corner-free pieces to match against font geometry.
-"""
+"""Shared stroke-path geometry: sampling, simplification, and corner-aware smoothing."""
 
 from __future__ import annotations
 
 import numpy as np
 import svgpathtools
-from scipy.interpolate import splev, splprep
 
 #: Turning angle (degrees) at an RDP waypoint above which the stroke is
 #: treated as a genuine corner rather than part of a continuous curve.
@@ -105,6 +99,16 @@ def turn_angles(way: np.ndarray) -> np.ndarray:
     """Compute the turning angle (degrees) at each interior point of a polyline.
 
     Endpoints are 0 (no turn is defined there).
+
+    Parameters
+    ----------
+    way : np.ndarray
+        Waypoint polyline, shape ``(n, 2)``.
+
+    Returns
+    -------
+    np.ndarray
+        Turning angle in degrees at each waypoint, shape ``(n,)``.
     """
     angles = np.zeros(len(way))
     for i in range(1, len(way) - 1):
@@ -127,6 +131,19 @@ def split_at_corners(
     stays positionally connected, while each piece is fit independently —
     letting the curve break tangent sharply at a real corner instead of
     being forced smooth across it by one global spline.
+
+    Parameters
+    ----------
+    way : np.ndarray
+        Waypoint polyline, shape ``(n, 2)``.
+    corner_angle_deg : float, optional
+        Turning angle above which a waypoint is treated as a corner.
+
+    Returns
+    -------
+    list[np.ndarray]
+        One or more polyline pieces; consecutive pieces share their
+        boundary waypoint.
     """
     if len(way) < 3:
         return [way]
@@ -143,48 +160,71 @@ def split_at_corners(
     return pieces
 
 
-def fit_piece(pts: np.ndarray, n_out: int) -> list[str]:
+def fit_piece(pts: np.ndarray) -> list[str]:
     """Fit one corner-free piece and return its path commands (no leading M).
 
+    Each consecutive pair of waypoints becomes one cubic bezier segment,
+    using a centripetal-Catmull-Rom tangent at each waypoint (estimated
+    from its immediate neighbors only) converted to Hermite-equivalent
+    bezier control points. This is a *local* fit — each segment's shape
+    depends only on that waypoint and its neighbors — deliberately unlike a
+    single global interpolating spline through the whole piece, which
+    forces every segment to satisfy one shared curvature constraint. That
+    global constraint is what previously made an otherwise-straight run
+    bulge into a visible wave whenever it followed a very differently
+    curved section (e.g. a loop feeding into a straight downstroke, which
+    share a piece whenever their junction isn't a sharp-enough corner to
+    split on) — verified concretely on ബ's middle stroke, whose straight
+    vertical connector was rendered as a curve for exactly this reason
+    before switching to local tangents.
+
     Falls back to straight `L` segments when there aren't enough distinct
-    points left for a cubic spline (also the natural result for a piece
-    that's just two corner points with nothing in between).
+    points left for a curve (also the natural result for a piece that's
+    just two corner points with nothing in between).
+
+    Parameters
+    ----------
+    pts : np.ndarray
+        Corner-free piece of a waypoint polyline, shape ``(n, 2)``.
+
+    Returns
+    -------
+    list[str]
+        SVG path commands (``L`` or ``C``) continuing from `pts`'s
+        first point, or ``[]`` if fewer than 2 distinct points remain.
     """
     x, y = pts[:, 0], pts[:, 1]
 
-    # Remove near-duplicate consecutive points (splprep requires distinct knots)
+    # Remove near-duplicate consecutive points (zero-length segments have no
+    # meaningful tangent).
     keep = np.ones(len(x), dtype=bool)
     for i in range(1, len(x)):
         if abs(x[i] - x[i - 1]) < 0.1 and abs(y[i] - y[i - 1]) < 0.1:
             keep[i] = False
-    x, y = x[keep], y[keep]
+    pts = np.column_stack([x[keep], y[keep]])
 
-    if len(x) < 2:
+    n = len(pts)
+    if n < 2:
         return []
-    if len(x) < 4:
-        return [f"L {x[i]:.1f} {y[i]:.1f}" for i in range(1, len(x))]
+    if n < 4:
+        return [f"L {pts[i, 0]:.1f} {pts[i, 1]:.1f}" for i in range(1, n)]
 
-    try:
-        tck, _ = splprep([x, y], s=0, k=3)
-    except Exception:
-        return [f"L {x[i]:.1f} {y[i]:.1f}" for i in range(1, len(x))]
+    def tangent(i: int) -> np.ndarray:
+        if i == 0:
+            return pts[1] - pts[0]
+        if i == n - 1:
+            return pts[-1] - pts[-2]
+        return (pts[i + 1] - pts[i - 1]) / 2.0
 
-    n_out = max(n_out, 2)
-    u = np.linspace(0, 1, n_out)
-    xs, ys = splev(u, tck)
-    dxs, dys = splev(u, tck, der=1)
-
-    # Hermite → bezier: CP1 = P[i] + d[i]/3·dt,  CP2 = P[i+1] - d[i+1]/3·dt
-    dt = 1.0 / (n_out - 1)
     parts = []
-    for i in range(n_out - 1):
-        cp1x = xs[i] + dxs[i] * dt / 3
-        cp1y = ys[i] + dys[i] * dt / 3
-        cp2x = xs[i + 1] - dxs[i + 1] * dt / 3
-        cp2y = ys[i + 1] - dys[i + 1] * dt / 3
+    for i in range(n - 1):
+        p0, p1 = pts[i], pts[i + 1]
+        m0, m1 = tangent(i), tangent(i + 1)
+        # Hermite (p0, m0, p1, m1) -> bezier: CP1 = p0 + m0/3, CP2 = p1 - m1/3
+        cp1 = p0 + m0 / 3
+        cp2 = p1 - m1 / 3
         parts.append(
-            f"C {cp1x:.1f} {cp1y:.1f} {cp2x:.1f} {cp2y:.1f}"
-            f" {xs[i + 1]:.1f} {ys[i + 1]:.1f}"
+            f"C {cp1[0]:.1f} {cp1[1]:.1f} {cp2[0]:.1f} {cp2[1]:.1f} {p1[0]:.1f} {p1[1]:.1f}"
         )
     return parts
 
@@ -192,14 +232,22 @@ def fit_piece(pts: np.ndarray, n_out: int) -> list[str]:
 def smooth_points(
     pts: np.ndarray,
     rdp_epsilon: float = 20.0,
-    n_out: int = 50,
     corner_angle_deg: float = CORNER_ANGLE_DEG,
 ) -> str | None:
-    """Fit smooth cubic B-splines through an already-sampled point array.
+    """Fit smooth local (Catmull-Rom-tangent) cubic beziers through sampled points.
 
     Core of :func:`smooth_stroke`, split out so a pipeline stage that has
     already moved the points (e.g. centering) can feed them straight in
     without a round trip through an SVG path string.
+
+    Parameters
+    ----------
+    pts : np.ndarray
+        Already-sampled stroke points, shape ``(n, 2)``.
+    rdp_epsilon : float, optional
+        Maximum perpendicular deviation for RDP waypoint simplification.
+    corner_angle_deg : float, optional
+        Turning angle above which a waypoint is treated as a corner.
 
     Returns
     -------
@@ -214,16 +262,10 @@ def smooth_points(
         waypts = pts
 
     pieces = split_at_corners(waypts, corner_angle_deg)
-    piece_lens = [
-        float(np.sum(np.linalg.norm(np.diff(piece, axis=0), axis=1))) if len(piece) > 1 else 0.0
-        for piece in pieces
-    ]
-    total_len = sum(piece_lens) or 1.0
 
     d_parts = [f"M {pieces[0][0, 0]:.1f} {pieces[0][0, 1]:.1f}"]
-    for piece, piece_len in zip(pieces, piece_lens):
-        piece_n_out = max(4, round(n_out * piece_len / total_len))
-        d_parts.extend(fit_piece(piece, piece_n_out))
+    for piece in pieces:
+        d_parts.extend(fit_piece(piece))
 
     return " ".join(d_parts) if len(d_parts) > 1 else None
 
@@ -232,21 +274,27 @@ def smooth_stroke(
     stroke_d: str,
     n_samples: int = 120,
     rdp_epsilon: float = 20.0,
-    n_out: int = 50,
     corner_angle_deg: float = CORNER_ANGLE_DEG,
 ) -> str:
-    """Fit smooth cubic B-splines to a hand-authored SVG stroke.
+    """Fit smooth local (Catmull-Rom-tangent) cubic beziers to a hand-authored stroke.
 
     The RDP-simplified waypoints are split into corner-free pieces (see
-    ``corner_angle_deg``), each fit independently and stitched back
-    together. A stroke with no sharp corners is fit as a single global
-    spline; one with genuine corners gets a clean tangent break at each
-    instead of the spline overshooting to stay smooth there.
+    ``corner_angle_deg``), each fit independently (:func:`fit_piece`) and
+    stitched back together. A stroke with no sharp corners is fit as one
+    continuous run of local-tangent segments; one with genuine corners gets
+    a clean tangent break at each instead of a global spline overshooting to
+    stay smooth there.
 
     Parameters
     ----------
     stroke_d : str
         Raw SVG ``d`` string from the stroke recorder.
+    n_samples : int, optional
+        Number of arc-length-uniform points to sample from `stroke_d`.
+    rdp_epsilon : float, optional
+        Maximum perpendicular deviation for RDP waypoint simplification.
+    corner_angle_deg : float, optional
+        Turning angle above which a waypoint is treated as a corner.
 
     Returns
     -------
@@ -255,5 +303,5 @@ def smooth_stroke(
         if the input is too short.
     """
     pts = sample_path(stroke_d, n_samples)
-    result = smooth_points(pts, rdp_epsilon, n_out, corner_angle_deg)
+    result = smooth_points(pts, rdp_epsilon, corner_angle_deg)
     return result if result is not None else stroke_d

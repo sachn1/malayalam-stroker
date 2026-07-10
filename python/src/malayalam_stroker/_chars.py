@@ -1,25 +1,24 @@
-"""Complete Unicode character inventory for the Malayalam script.
-
-All constants are ``tuple[str, ...]`` (ordered, hashable) so callers can
-iterate them or pass them directly to ``frozenset`` when order doesn't matter.
-"""
+"""Complete Unicode character inventory for the Malayalam script."""
 
 from __future__ import annotations
 
+# All constants are tuple[str, ...] (ordered, hashable) so callers can
+# iterate them or pass them directly to frozenset when order doesn't matter.
+
 __all__ = [
+    "ANUSVARA",
     "AU_LENGTH_MARK",
+    "CHILLU",
+    "CONSONANTS",
     "INDEPENDENT_VOWELS",
+    "MATRAS",
+    "NUMERALS",
+    "RARE_CONSONANTS",
+    "RARE_MATRAS",
     "RARE_VOWELS",
     "REGULAR_CONSONANTS",
     "SPECIAL_CONSONANTS",
-    "RARE_CONSONANTS",
-    "CONSONANTS",
-    "CHILLU",
-    "NUMERALS",
-    "MATRAS",
-    "RARE_MATRAS",
     "VIRAMA",
-    "ANUSVARA",
     "VISARGA",
 ]
 

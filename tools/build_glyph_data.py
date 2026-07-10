@@ -182,10 +182,12 @@ _COMPOSABLE_MARKS = [
     VIRAMA,
     *MATRAS,
     *RARE_MATRAS,
-    AU_LENGTH_MARK,  # ൗ — the suffix half of ൌ's decomposition (js/src/index.js's SPLIT_VOWEL_PARTS)
+    AU_LENGTH_MARK,  # ൗ — suffix half of ൌ's decomposition (see index.js's SPLIT_VOWEL_PARTS)
     VIRAMA + "യ",
     VIRAMA + "വ",
     VIRAMA + "ല",
+    ANUSVARA,  # ം — only pre-shaped as a *direct* cluster for single-char bases  # noqa: RUF003
+    VISARGA,  # ഃ — (_anusvara_visarga_inputs); a conjunct base needs this recipe instead
 ]
 
 
@@ -253,8 +255,7 @@ def main() -> None:
 
     size_kb = out_path.stat().st_size // 1024
     print(
-        f"Written {out_path.relative_to(ROOT)}  ({size_kb} KB, "
-        f"{len(result['clusters'])} clusters)",
+        f"Written {out_path.relative_to(ROOT)}  ({size_kb} KB, {len(result['clusters'])} clusters)",
         file=sys.stderr,
     )
 

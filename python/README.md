@@ -13,7 +13,8 @@ change fonts) and commit the output.
 cd python && poetry install
 ```
 
-Requires Python 3.10+. Dependencies: `fonttools`, `uharfbuzz`.
+Requires Python 3.10+. Dependencies: `fonttools`, `uharfbuzz`, `svgpathtools`,
+`numpy`, `scipy`, `pillow`.
 
 ## Generate glyph-data.json
 
@@ -25,59 +26,7 @@ poetry run python ../tools/build_glyph_data.py
 poetry run python ../tools/build_glyph_data.py /path/to/MyFont.ttf
 ```
 
-Output: `js/src/glyph-data.json` (~1 MB). Commit this file.
-
-## Shape individual words (CLI)
-
-```bash
-poetry run python -m malayalam_stroker Manjari-Regular.ttf "മലയാളം" "നന്ദി" > out.json
-```
-
-Prints a JSON array, one `StrokeTrace` object per word. Useful for
-inspecting shaped output or building one-off datasets.
-
-## Generate the full alphabet
-
-```bash
-poetry run python -m malayalam_stroker alphabet tests/fixtures/Manjari-Regular.ttf > alphabet.json
-```
-
-Produces a JSON array covering all Malayalam base characters and
-consonant-matra combinations — input for `tools/stroke-recorder.html`.
-
-## Why shaping matters
-
-Malayalam isn't a 1:1 codepoint-to-glyph mapping — consonant clusters
-collapse into ligatures, vowel signs reorder visually. HarfBuzz handles this
-correctly:
-
-```python
->>> word = "ക്ഷമിക്കണം"
->>> len(word)                                    # 10 Unicode codepoints
-10
->>> len(shape_word(word, font)["glyphs"])        # 6 shaped glyphs
-6
-```
-
-Anything that walks codepoints and looks up the font's cmap directly will
-produce broken conjuncts.
-
-## Font
-
-The bundled font is `tests/fixtures/Manjari-Regular.ttf` (SIL OFL, free).
-Any font with proper Malayalam GSUB/GPOS tables works — pass its path to the
-build script or CLI.
-
-## License
-
-MIT.
-
-
-## Install
-
-```bash
-pip install malayalam-stroker
-```
+Output: `js/src/glyph-data.json`. Commit this file.
 
 ## Usage
 
@@ -92,33 +41,6 @@ trace["glyphs"][0]    # {"glyphName": "n1", "cluster": 0, "d": "M...Z", "x": 0, 
 
 `d` is an SVG path string in y-down coordinates (already flipped from the
 font's native y-up space), so you can drop it straight into an `<svg>`.
-
-### Why shaping matters
-
-Malayalam (like most Brahmic scripts) isn't a 1:1 codepoint-to-glyph
-mapping — consonant clusters collapse into ligatures, vowel signs can
-reorder visually. Compare:
-
-```python
->>> word = "ക്ഷമിക്കണം"
->>> len(word)                       # 10 Unicode codepoints
-10
->>> len(shape_word(word, font)["glyphs"])   # 6 shaped glyphs
-6
-```
-
-ക്ഷ (4 codepoints: ക + ്  + ഷ) shapes to a single ligature glyph. Anything
-that just walks codepoints and looks up a font's cmap will get this
-wrong.
-
-### CLI
-
-```bash
-python -m malayalam_stroker Manjari-Regular.ttf "മലയാളം" "നന്ദി" > out.json
-```
-
-Prints a JSON array, one trace per word (each with the input word
-attached as `"word"`), in input order.
 
 ## StrokeTrace shape
 
@@ -135,25 +57,56 @@ attached as `"word"`), in input order.
 }
 ```
 
-`x`/`y` are pen-position offsets (already includes any HarfBuzz
-positioning adjustments) — translate each glyph's `<path d={d}>` by
-`(x, y)` to place it correctly relative to the others.
+`x`/`y` are pen-position offsets (already includes any HarfBuzz positioning
+adjustments) — translate each glyph's `<path d={d}>` by `(x, y)` to place it
+correctly relative to the others.
+
+## CLI
+
+```bash
+# Shape one or more words, print a JSON array (one StrokeTrace per word,
+# each with the input word attached as "word"), in input order:
+poetry run python -m malayalam_stroker Manjari-Regular.ttf "മലയാളം" "നന്ദി" > out.json
+
+# Shape the full Malayalam base alphabet as one trace — quick input for
+# tools/stroke-recorder.html without running the full build pipeline:
+poetry run python -m malayalam_stroker alphabet tests/fixtures/Manjari-Regular.ttf > alphabet.json
+```
+
+## Why shaping matters
+
+Malayalam (like most Brahmic scripts) isn't a 1:1 codepoint-to-glyph
+mapping — consonant clusters collapse into ligatures, vowel signs can
+reorder visually:
+
+```python
+>>> word = "ക്ഷമിക്കണം"
+>>> len(word)                              # 10 Unicode codepoints
+10
+>>> len(shape_word(word, font)["glyphs"])  # 6 shaped glyphs
+6
+```
+
+ക്ഷ (4 codepoints: ക + ് + ഷ, plus the following vowel sign) shapes to a
+single ligature glyph. Anything that just walks codepoints and looks up a
+font's cmap directly will get this wrong.
 
 ## Fonts
 
-This package doesn't bundle a font — bring your own. Tested against
-[Manjari](https://fonts.google.com/specimen/Manjari) and
-[Chilanka](https://fonts.google.com/specimen/Chilanka) (both SIL OFL,
-free), but any font with proper Malayalam GSUB/GPOS tables should work.
-No GSUB/GPOS support generally means broken conjuncts — check your font
-choice if shaped output looks wrong.
+This package doesn't bundle a font for its own distribution — bring your
+own. Tested against [Manjari](https://fonts.google.com/specimen/Manjari)
+and [Chilanka](https://fonts.google.com/specimen/Chilanka) (both SIL OFL,
+free); any font with proper Malayalam GSUB/GPOS tables should work. No
+GSUB/GPOS support generally means broken conjuncts — check your font choice
+if shaped output looks wrong. The bundled *test* fixture is
+`tests/fixtures/Manjari-Regular.ttf` (SIL OFL — see `tests/fixtures/OFL.txt`).
 
 ## Scope
 
 Despite the name, nothing here is Malayalam-specific at the code level —
 `shape_word` will happily shape Latin, Devanagari, or anything else
-HarfBuzz and your font support. The name reflects the motivating use
-case (there wasn't an existing stroke-order tool for Malayalam).
+HarfBuzz and your font support. The name reflects the motivating use case
+(there wasn't an existing stroke-order tool for Malayalam).
 
 ## License
 

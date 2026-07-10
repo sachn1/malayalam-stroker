@@ -108,7 +108,10 @@ def check() -> None:
     """Exit non-zero with a clear message if the standalone file is stale."""
     if not OUT.exists():
         print(f"STALE: {OUT.relative_to(ROOT)} does not exist yet.", file=sys.stderr)
-        print("Regenerate with: python tools/build_standalone_recorder.py", file=sys.stderr)
+        print(
+            "Regenerate with: python tools/build_standalone_recorder.py",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     existing = OUT.read_text(encoding="utf-8")
@@ -116,17 +119,20 @@ def check() -> None:
     current = _source_hash()
     if not m or m.group(1) != current:
         print(
-            f"STALE: {OUT.relative_to(ROOT)} is out of sync with "
-            "stroke-recorder.{html,css,js}.",
+            f"STALE: {OUT.relative_to(ROOT)} is out of sync with stroke-recorder.{{html,css,js}}.",
             file=sys.stderr,
         )
-        print("Regenerate with: python tools/build_standalone_recorder.py", file=sys.stderr)
+        print(
+            "Regenerate with: python tools/build_standalone_recorder.py",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     print(f"{OUT.relative_to(ROOT)} is in sync with its sources.")
 
 
 def main() -> None:
+    """Parse CLI args and dispatch to `build()` or `check()`."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check",

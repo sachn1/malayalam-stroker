@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.pyc
+.coverage
+coverage/
 node_modules/
 dist/
 build/

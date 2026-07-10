@@ -28,7 +28,7 @@ _CONTENT_TYPES = {
 class DemoHandler(BaseHTTPRequestHandler):
     """HTTP request handler for static files and the /api/shape/ endpoint."""
 
-    def do_GET(self) -> None:
+    def do_GET(self) -> None:  # noqa: N802 — name required by BaseHTTPRequestHandler
         """Handle GET requests, routing to static or shape handler."""
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/shape/"):
@@ -74,15 +74,15 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: object) -> None:
         """Suppress default access-log output."""
-        pass
 
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     server = ThreadingHTTPServer(("0.0.0.0", port), DemoHandler)
     import socket
+
     local_ip = socket.gethostbyname(socket.gethostname())
     print(f"malayalam-stroker demo running at http://127.0.0.1:{port}/demo/")
     print(f"On your tablet (same Wi-Fi): http://{local_ip}:{port}/tools/stroke-recorder.html")

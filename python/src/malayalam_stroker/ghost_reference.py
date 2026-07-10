@@ -1,17 +1,4 @@
-"""Build straight reference segments from a glyph's ghost outline, in centerline space.
-
-A hand-drawn stroke is a *centerline* running through the middle of the ink,
-offset from the outline boundary by roughly half the local stroke width — so
-straightening/angle-correction can't use outline edges directly as a
-reference (see module docstring history in git log for the outline-snap
-approach this replaced). Instead: find straight edges on the raw outline
-(:func:`find_straight_segments`), then gradient-ascend them into the ink
-using :mod:`malayalam_stroker.centering` — climbing from the boundary to the
-local ridge of the distance field gives the centerline that edge implies, at
-whatever the local stroke width is. A line fit through the ascended points is
-kept only if it's clean (low residual) — this discards edges near
-corners/junctions where ascent can wander to the wrong local ridge.
-"""
+"""Build straight reference segments from a glyph's ghost outline, in centerline space."""
 
 from __future__ import annotations
 
@@ -23,22 +10,33 @@ import svgpathtools
 from .centering import DistField, center_points
 from .geometry import CORNER_ANGLE_DEG
 
-N_GHOST_SAMPLES_PER_UNIT = 0.3  # ghost outline sampling density (pts per font unit)
-STRAIGHT_TOLERANCE = 5.0  # max deviation (fu) for an outline edge to count as "straight"
-STRAIGHT_MIN_LENGTH = 50.0  # min length (fu) for an outline edge segment
+N_GHOST_SAMPLES_PER_UNIT: float = 0.3  # ghost outline sampling density (pts per font unit)
+STRAIGHT_TOLERANCE: float = 5.0  # max deviation (fu) for an outline edge to count as "straight"
+STRAIGHT_MIN_LENGTH: float = 50.0  # min length (fu) for an outline edge segment
 
-REF_MIN_LENGTH = 60.0  # ignore outline edges too short to trust as a reference
-REF_MAX_RESIDUAL = 30.0  # max fu deviation from a straight line after ascent
+REF_MIN_LENGTH: float = 60.0  # ignore outline edges too short to trust as a reference
+REF_MAX_RESIDUAL: float = 30.0  # max fu deviation from a straight line after ascent
 
 # -- Hand-drawn stroke: corner splitting + straight-run matching --
-STRAIGHT_RESIDUAL_TOLERANCE = 15.0  # max fu deviation for a piece to count as "meant to be straight"
-MIN_STRAIGHT_PIECE_LENGTH = 40.0  # ignore tiny nubs
-ANGLE_MATCH_TOLERANCE_DEG = 22.0
-DIST_MATCH_TOLERANCE = 45.0
+STRAIGHT_RESIDUAL_TOLERANCE: float = 15.0  # max fu deviation for a "meant to be straight" piece
+MIN_STRAIGHT_PIECE_LENGTH: float = 40.0  # ignore tiny nubs
+ANGLE_MATCH_TOLERANCE_DEG: float = 22.0
+DIST_MATCH_TOLERANCE: float = 45.0
 
 
 def sample_outline(glyph_glyphs: list[dict]) -> list[np.ndarray]:
-    """Sample points along each ghost outline contour."""
+    """Sample points along each ghost outline contour.
+
+    Parameters
+    ----------
+    glyph_glyphs : list[dict]
+        Glyph components, each with ``d`` (SVG path), ``x``, ``y``.
+
+    Returns
+    -------
+    list[np.ndarray]
+        One ``(n, 2)`` array of sampled points per outline contour.
+    """
     contours = []
     for comp in glyph_glyphs:
         dx, dy = comp.get("x", 0), comp.get("y", 0)
@@ -60,7 +58,19 @@ def sample_outline(glyph_glyphs: list[dict]) -> list[np.ndarray]:
 
 
 def find_straight_segments(contours: list[np.ndarray]) -> list[dict]:
-    """Find straight edge segments in the raw ghost outline (boundary space)."""
+    """Find straight edge segments in the raw ghost outline (boundary space).
+
+    Parameters
+    ----------
+    contours : list[np.ndarray]
+        Sampled outline contours, as returned by :func:`sample_outline`.
+
+    Returns
+    -------
+    list[dict]
+        One entry per straight edge found, each with ``start``, ``end``
+        (points) and ``length`` (float).
+    """
     segments = []
     for contour in contours:
         n = len(contour)
@@ -76,9 +86,7 @@ def find_straight_segments(contours: list[np.ndarray]) -> list[dict]:
                 if chord_len < 1e-6:
                     continue
                 delta = contour[i + 1 : j] - contour[i]
-                perp_dist = np.abs(
-                    chord[0] * delta[:, 1] - chord[1] * delta[:, 0]
-                ) / chord_len
+                perp_dist = np.abs(chord[0] * delta[:, 1] - chord[1] * delta[:, 0]) / chord_len
                 if np.max(perp_dist) <= STRAIGHT_TOLERANCE:
                     if chord_len >= STRAIGHT_MIN_LENGTH:
                         best_end = j
@@ -102,7 +110,18 @@ def fit_line(
 ) -> tuple[np.ndarray, np.ndarray, float, float, float]:
     """Fit the best line through points via PCA.
 
-    Returns (mean, unit_direction, max_perp_residual, proj_min, proj_max).
+    Parameters
+    ----------
+    pts : np.ndarray
+        Points to fit, shape ``(n, 2)``.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, float, float, float]
+        ``(mean, unit_direction, max_perp_residual, proj_min, proj_max)``:
+        the line's mean point, unit direction vector, the largest
+        perpendicular deviation from it, and the min/max projection of
+        `pts` onto that direction (the line's extent).
     """
     mean = pts.mean(axis=0)
     centered = pts - mean
@@ -123,6 +142,19 @@ def build_reference_segments(glyph_glyphs: list[dict], field: DistField) -> list
     through the ascended points is kept only if it's clean (low residual) —
     this discards edges near corners/junctions where ascent can wander to
     the wrong local ridge.
+
+    Parameters
+    ----------
+    glyph_glyphs : list[dict]
+        Glyph components, each with ``d`` (SVG path), ``x``, ``y``.
+    field : DistField
+        The glyph's distance-transform field to ascend into.
+
+    Returns
+    -------
+    list[dict]
+        Reference segments, each with ``start``, ``end``, ``direction``
+        (unit vector), ``angle`` (degrees, mod 180) and ``length``.
     """
     if field.ink_tree is None:
         return []
@@ -136,9 +168,7 @@ def build_reference_segments(glyph_glyphs: list[dict], field: DistField) -> list
             continue
         n_sample = max(6, int(seg["length"] / 40))
         chord = seg["end"] - seg["start"]
-        sample_pts = np.array(
-            [seg["start"] + t * chord for t in np.linspace(0.15, 0.85, n_sample)]
-        )
+        sample_pts = np.array([seg["start"] + t * chord for t in np.linspace(0.15, 0.85, n_sample)])
         ascended = center_points(sample_pts, field, max_shift_fu=float("inf"))
 
         mean, direction, residual, pmin, pmax = fit_line(ascended)
@@ -147,19 +177,22 @@ def build_reference_segments(glyph_glyphs: list[dict], field: DistField) -> list
             continue
 
         angle = np.degrees(np.arctan2(direction[1], direction[0])) % 180
-        refs.append({
-            "start": mean + direction * pmin,
-            "end": mean + direction * pmax,
-            "direction": direction,
-            "angle": angle,
-            "length": length,
-        })
+        refs.append(
+            {
+                "start": mean + direction * pmin,
+                "end": mean + direction * pmax,
+                "direction": direction,
+                "angle": angle,
+                "length": length,
+            }
+        )
     return refs
 
 
 # ---------------------------------------------------------------------------
 # Hand-drawn stroke: corner splitting + straight-run matching
 # ---------------------------------------------------------------------------
+
 
 def split_path_into_pieces(path: svgpathtools.Path) -> list[list]:
     """Group path segments into corner-free pieces via tangent-angle breaks.
@@ -169,6 +202,16 @@ def split_path_into_pieces(path: svgpathtools.Path) -> list[list]:
     points — the corner is already a real geometric feature of the smoothed
     path (a tangent break between two pieces), not something that needs
     re-inferring.
+
+    Parameters
+    ----------
+    path : svgpathtools.Path
+        Parsed SVG path to split.
+
+    Returns
+    -------
+    list[list]
+        One list of consecutive path segments per corner-free piece.
     """
     if len(path) == 0:
         return []
@@ -192,7 +235,21 @@ def split_path_into_pieces(path: svgpathtools.Path) -> list[list]:
 
 
 def sample_piece(segs: list, n: int = 30) -> np.ndarray:
-    """Sample n arc-length-uniform points along a piece's parsed path segments."""
+    """Sample n arc-length-uniform points along a piece's parsed path segments.
+
+    Parameters
+    ----------
+    segs : list
+        Consecutive parsed path segments forming one corner-free piece.
+    n : int, optional
+        Number of equally-spaced samples.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(n, 2)`` with ``(x, y)`` coordinates, or a
+        single-point array if the piece has zero length.
+    """
     sub = svgpathtools.Path(*segs)
     length = sub.length()
     if length <= 0:
@@ -213,7 +270,24 @@ def sample_piece(segs: list, n: int = 30) -> np.ndarray:
 def match_reference(
     piece_pts: np.ndarray, piece_direction: np.ndarray, refs: list[dict]
 ) -> dict | None:
-    """Find the best reference segment matching a straight hand-drawn run, if any."""
+    """Find the best reference segment matching a straight hand-drawn run, if any.
+
+    Parameters
+    ----------
+    piece_pts : np.ndarray
+        Sampled points of the hand-drawn straight run, shape ``(n, 2)``.
+    piece_direction : np.ndarray
+        Unit direction vector of the run, as fit by :func:`fit_line`.
+    refs : list[dict]
+        Candidate reference segments, as returned by
+        :func:`build_reference_segments`.
+
+    Returns
+    -------
+    dict | None
+        The closest matching reference segment within tolerance, or
+        ``None`` if none match.
+    """
     piece_angle = np.degrees(np.arctan2(piece_direction[1], piece_direction[0])) % 180
     best, best_dist = None, None
     for ref in refs:
@@ -257,6 +331,19 @@ def refine_stroke(stroke_d: str, refs: list[dict]) -> str:
     font's actual angle. Runs with no good match, or that aren't straight,
     are kept as authored (rigidly translated to stay attached at the corner
     after a neighboring correction).
+
+    Parameters
+    ----------
+    stroke_d : str
+        Raw SVG ``d`` string from the stroke recorder (already smoothed).
+    refs : list[dict]
+        Reference segments, as returned by :func:`build_reference_segments`.
+
+    Returns
+    -------
+    str
+        Refined SVG ``d`` string. Falls back to `stroke_d` unchanged if
+        it's unparseable or empty.
     """
     try:
         path = svgpathtools.parse_path(stroke_d)
@@ -280,8 +367,7 @@ def refine_stroke(stroke_d: str, refs: list[dict]) -> str:
         pts = sample_piece(segs)
         _, direction, residual, pmin, pmax = fit_line(pts)
         is_straight = (
-            residual < STRAIGHT_RESIDUAL_TOLERANCE
-            and (pmax - pmin) > MIN_STRAIGHT_PIECE_LENGTH
+            residual < STRAIGHT_RESIDUAL_TOLERANCE and (pmax - pmin) > MIN_STRAIGHT_PIECE_LENGTH
         )
         match = match_reference(pts, direction, refs) if (is_straight and refs) else None
 

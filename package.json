@@ -1,0 +1,16 @@
+{
+  "name": "malayalam-stroker-repo",
+  "private": true,
+  "description": "Repo-level dev tooling (linting) for malayalam-stroker. The publishable package lives in js/.",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint js/src tools/*.js demo/*.js tests/*.js",
+    "test": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^9.39.4",
+    "vitest": "^4.1.10"
+  }
+}

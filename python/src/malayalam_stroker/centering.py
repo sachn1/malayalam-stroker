@@ -1,17 +1,4 @@
-"""Center stroke points via gradient ascent on a glyph's distance-transform field.
-
-For each stroke point:
-  1. Rasterize the filled ghost outline (tight bounding box, high resolution).
-  2. Compute the Euclidean distance transform → each ink pixel's value is its
-     depth inside the letter (distance to nearest outline edge).
-  3. The point climbs the gradient of this field for a fixed number of small
-     steps — always moving toward the local maximum (= center of the ink at
-     that position). Following the local gradient means it can't jump to a
-     different branch on the other side of the letter.
-
-Build a :class:`DistField` once per cluster with :func:`make_dist_field`, then
-call :func:`center_points` for each of its strokes.
-"""
+"""Center stroke points via gradient ascent on a glyph's distance-transform field."""
 
 from __future__ import annotations
 
@@ -24,15 +11,15 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial import cKDTree
 
-RASTER_SIZE = 1024  # px — larger = finer gradient field
-BBOX_PAD = 100.0  # font units padding around outline bbox
+RASTER_SIZE: int = 1024  # px — larger = finer gradient field
+BBOX_PAD: float = 100.0  # font units padding around outline bbox
 
-N_ASCENT_STEPS = 20  # gradient ascent iterations per point
-ASCENT_STEP_PX = 0.6  # step size in pixels per iteration (sub-pixel)
+N_ASCENT_STEPS: int = 20  # gradient ascent iterations per point
+ASCENT_STEP_PX: float = 0.6  # step size in pixels per iteration (sub-pixel)
 
 #: Maximum a single point can move (font units). Prevents overshooting on
 #: complex shapes where the gradient leads to the wrong local ridge.
-MAX_SHIFT_FU = 80.0
+MAX_SHIFT_FU: float = 80.0
 
 
 @dataclass
@@ -50,15 +37,29 @@ class DistField:
 
     @property
     def w(self) -> float:
+        """Bounding-box width in font units."""
         return self.x_max - self.x_min
 
     @property
     def h(self) -> float:
+        """Bounding-box height in font units."""
         return self.y_max - self.y_min
 
 
 def make_dist_field(glyph_glyphs: list[dict]) -> DistField:
-    """Rasterize outlines and compute the distance transform + its gradient."""
+    """Rasterize outlines and compute the distance transform + its gradient.
+
+    Parameters
+    ----------
+    glyph_glyphs : list[dict]
+        Glyph components, each with ``d`` (SVG path), ``x``, ``y``.
+
+    Returns
+    -------
+    DistField
+        The rasterized field, or an empty/degenerate one if `glyph_glyphs`
+        has no ink (``ink_tree`` is ``None`` in that case).
+    """
     all_pts: list[tuple[float, float]] = []
     comp_polys: list[list[tuple[float, float]]] = []
 
@@ -114,12 +115,40 @@ def make_dist_field(glyph_glyphs: list[dict]) -> DistField:
 
 
 def fu_to_px(field: DistField, fx: float, fy: float) -> tuple[float, float]:
+    """Convert a font-unit coordinate to a (row, col) pixel position in `field`.
+
+    Parameters
+    ----------
+    field : DistField
+        The distance field whose raster mapping to use.
+    fx, fy : float
+        Coordinate in font units.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(row, col)`` pixel position.
+    """
     col = (fx - field.x_min) / field.w * RASTER_SIZE
     row = (field.y_max - fy) / field.h * RASTER_SIZE
     return row, col
 
 
 def px_to_fu(field: DistField, row: float, col: float) -> tuple[float, float]:
+    """Convert a (row, col) pixel position in `field` back to font units.
+
+    Parameters
+    ----------
+    field : DistField
+        The distance field whose raster mapping to use.
+    row, col : float
+        Pixel position.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(fx, fy)`` coordinate in font units.
+    """
     fx = col / RASTER_SIZE * field.w + field.x_min
     fy = field.y_max - row / RASTER_SIZE * field.h
     return fx, fy
@@ -128,10 +157,10 @@ def px_to_fu(field: DistField, row: float, col: float) -> tuple[float, float]:
 def _ascend(field: DistField, row: float, col: float) -> tuple[float, float]:
     """Climb the distance field from (row, col) to the local ink ridge (centerline)."""
     dist, grad_r, grad_c = field.dist, field.grad_r, field.grad_c
-    H, W = dist.shape
+    height, width = dist.shape
     r, c = float(row), float(col)
 
-    if not (0 <= r < H and 0 <= c < W) or dist[int(r), int(c)] < 0.5:
+    if not (0 <= r < height and 0 <= c < width) or dist[int(r), int(c)] < 0.5:
         if field.ink_tree is None:
             return r, c
         _, idx = field.ink_tree.query([[r, c]])
@@ -140,7 +169,7 @@ def _ascend(field: DistField, row: float, col: float) -> tuple[float, float]:
 
     for _ in range(N_ASCENT_STEPS):
         ri, ci = int(r), int(c)
-        if not (0 < ri < H - 1 and 0 < ci < W - 1):
+        if not (0 < ri < height - 1 and 0 < ci < width - 1):
             break
         gr, gc = grad_r[ri, ci], grad_c[ri, ci]
         mag = (gr * gr + gc * gc) ** 0.5
@@ -161,7 +190,7 @@ def _ascend(field: DistField, row: float, col: float) -> tuple[float, float]:
 #: visible bulge/doubling in an otherwise-single line. Smoothing the
 #: displacement *along the stroke* keeps the overall centering correction
 #: while removing that point-to-point jitter. 0 or 1 disables smoothing.
-DISPLACEMENT_SMOOTHING_WINDOW = 7
+DISPLACEMENT_SMOOTHING_WINDOW: int = 7
 
 
 def center_points(
@@ -179,6 +208,24 @@ def center_points(
     (see ``DISPLACEMENT_SMOOTHING_WINDOW``) before being applied, so the
     correction stays coherent from point to point instead of each one
     landing wherever its own independent ascent happened to stop.
+
+    Parameters
+    ----------
+    pts : np.ndarray
+        Stroke points to center, shape ``(n, 2)``.
+    field : DistField
+        The glyph's distance-transform field to center against.
+    max_shift_fu : float, optional
+        Maximum allowed movement per point, in font units.
+    smoothing_window : int, optional
+        Moving-average window (in points) for the displacement field;
+        ``0`` or ``1`` disables smoothing.
+
+    Returns
+    -------
+    np.ndarray
+        Centered points, same shape as `pts`. Returned unchanged if `field`
+        has no ink (``field.ink_tree`` is ``None``).
     """
     if field.ink_tree is None:
         return pts
@@ -198,9 +245,11 @@ def center_points(
     displacement = np.array(raw_targets) - pts
     if smoothing_window > 1 and len(pts) >= smoothing_window:
         kernel = np.ones(smoothing_window) / smoothing_window
-        displacement = np.column_stack([
-            np.convolve(displacement[:, 0], kernel, mode="same"),
-            np.convolve(displacement[:, 1], kernel, mode="same"),
-        ])
+        displacement = np.column_stack(
+            [
+                np.convolve(displacement[:, 0], kernel, mode="same"),
+                np.convolve(displacement[:, 1], kernel, mode="same"),
+            ]
+        )
 
     return pts + displacement

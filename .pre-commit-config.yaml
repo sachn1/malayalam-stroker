@@ -16,3 +16,18 @@ repos:
           - --ignore-magic
           - python/src
           - tools
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: npx eslint
+        language: system
+        files: ^(js/src|tools|demo|tests)/.*\.js$
+
+      - id: validate-data
+        name: validate-data (glyph-data/stroke-data structural integrity)
+        entry: python3 tools/validate_data.py
+        language: system
+        pass_filenames: false
+        files: ^js/src/(glyph-data|stroke-data(\.raw)?)\.json$

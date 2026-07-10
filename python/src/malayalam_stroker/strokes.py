@@ -14,10 +14,10 @@ from fontTools.ttLib import TTFont
 __all__ = ["MAX_WORD_LENGTH", "Glyph", "StrokeTrace", "shape_word"]
 
 # Font space is y-up; SVG is y-down — flip the y axis.
-_FLIP = (1, 0, 0, -1, 0, 0)
+_FLIP: tuple[int, int, int, int, int, int] = (1, 0, 0, -1, 0, 0)
 
 #: Soft ceiling on shapeable input length.
-MAX_WORD_LENGTH = 200
+MAX_WORD_LENGTH: int = 200
 
 
 class Glyph(TypedDict):

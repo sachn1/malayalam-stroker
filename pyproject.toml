@@ -1,0 +1,42 @@
+# Repo-wide tool config — deliberately at the repo root, not python/pyproject.toml,
+# so it's discovered for every Python file in the repo, including tools/*.py and
+# demo/serve.py, not just python/src. Ruff (and most Python tools) only walk up
+# from a file's own directory looking for the nearest config, so a config nested
+# inside python/ was silently invisible to anything outside that subtree.
+#
+# This is a config-only pyproject.toml — not a package manifest. The actual
+# installable package's manifest is python/pyproject.toml.
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "D",   # pydocstyle
+    "N",   # pep8-naming
+    "ANN", # annotations
+    "RUF", # ruff-specific
+]
+ignore = [
+    "D205",   # blank-line-after-summary — conflicts with NumPy 1-liner style
+    "D415",   # ends-with-period
+    "ANN401", # Any type allowed in some positions
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Malayalam characters cited as concrete examples in docs/comments —
+# legitimately ambiguous-looking, not a mistake, and RUF002 can't be
+# suppressed with an inline noqa when it's inside a docstring.
+"python/src/malayalam_stroker/stroke_compose.py" = ["RUF002", "RUF003"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.isort]
+known-first-party = ["malayalam_stroker"]
