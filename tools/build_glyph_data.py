@@ -36,6 +36,63 @@ _FONT = (
     else str(ROOT / "python" / "tests" / "fixtures" / "Manjari-Regular.ttf")
 )
 
+#: Compound vowel signs with a canonical (or, for ai, font-specific) split
+#: into simpler marks — see js/src/index.js's SPLIT_VOWEL_PARTS. These never
+#: need their own recorded stroke or standalone ghost; they're composed from
+#: their parts at runtime instead.
+_SPLIT_VOWELS = ("ൊ", "ോ", "ൌ")  # ൊ ോ ൌ
+
+
+def _standalone_inputs() -> list[str]:
+    """Single-codepoint clusters: letters, digits, and standalone diacritics."""
+    letters = (
+        "".join(INDEPENDENT_VOWELS)
+        + "".join(RARE_VOWELS)
+        + "".join(CONSONANTS)
+        + "".join(RARE_CONSONANTS)
+        + "".join(CHILLU)
+        + "".join(NUMERALS)
+    )
+    inputs = list(letters)
+
+    # Anusvara/visarga/au-length-mark appear after any cluster (including
+    # conjuncts), so they need their own glyph-data entries.
+    inputs += [ANUSVARA, VISARGA, AU_LENGTH_MARK]
+
+    # Virama and matras — give the recorder a real dotted-circle ghost to
+    # trace over (same reasoning as above) rather than recording these blind
+    # via the recorder's custom-cluster field. _SPLIT_VOWELS are excluded:
+    # they compose from simpler marks already covered here instead of
+    # needing their own recorded stroke.
+    inputs.append(VIRAMA)
+    inputs += [m for m in MATRAS + RARE_MATRAS if m not in _SPLIT_VOWELS]
+    return inputs
+
+
+def _consonant_matra_inputs() -> list[str]:
+    """Consonant + dependent vowel (every syllable), including rare matras."""
+    inputs = [c + m for c in CONSONANTS for m in MATRAS + RARE_MATRAS]
+    inputs += [c + m for c in RARE_CONSONANTS for m in MATRAS]
+    return inputs
+
+
+def _conjunct_inputs() -> list[str]:
+    """Conjuncts: consonant + virama + consonant.
+
+    consonant+virama (dead-consonant forms) and conjunct+matra are NOT
+    brute-forced here (that was 36 + 36*36*12 extra shape_word calls,
+    ballooning glyph-data.json from ~5.4MB to 63MB). Both compose cleanly at
+    runtime from a base cluster + a mark's prefix/suffix recipe — see
+    _build_marks() below and js/src/index.js's composeCluster().
+    """
+    return [c1 + VIRAMA + c2 for c1 in CONSONANTS for c2 in CONSONANTS]
+
+
+def _anusvara_visarga_inputs() -> list[str]:
+    """Independent vowels and consonants + anusvara / visarga."""
+    bases = INDEPENDENT_VOWELS + RARE_VOWELS + CONSONANTS
+    return [b + mark for b in bases for mark in (ANUSVARA, VISARGA)]
+
 
 def _build_input_list() -> list[str]:
     """Return all Unicode cluster strings to be shaped.
@@ -46,55 +103,12 @@ def _build_input_list() -> list[str]:
         Deduplicated list of cluster strings: standalone characters,
         consonant+matra (2-char), conjuncts (3-char), and mark combinations.
     """
-    inputs: list[str] = []
-
-    # Standalone characters (single codepoint)
-    standalone = (
-        "".join(INDEPENDENT_VOWELS)
-        + "".join(RARE_VOWELS)
-        + "".join(CONSONANTS)
-        + "".join(RARE_CONSONANTS)
-        + "".join(CHILLU)
-        + "".join(NUMERALS)
+    inputs = (
+        _standalone_inputs()
+        + _consonant_matra_inputs()
+        + _conjunct_inputs()
+        + _anusvara_visarga_inputs()
     )
-    inputs.extend(standalone)
-
-    # Standalone diacritics — anusvara and visarga appear after any cluster
-    # (including conjuncts), so they need their own glyph-data entries.
-    inputs.append(ANUSVARA)
-    inputs.append(VISARGA)
-    inputs.append(AU_LENGTH_MARK)
-
-    # Consonant + dependent vowel (every syllable), including rare matras
-    for c in CONSONANTS:
-        for m in MATRAS + RARE_MATRAS:
-            inputs.append(c + m)
-
-    # Rare consonants + matras
-    for c in RARE_CONSONANTS:
-        for m in MATRAS:
-            inputs.append(c + m)
-
-    # Conjuncts: consonant + virama + consonant
-    for c1 in CONSONANTS:
-        for c2 in CONSONANTS:
-            inputs.append(c1 + VIRAMA + c2)
-
-    # NOTE: consonant+virama (dead-consonant forms) and conjunct+matra are
-    # NOT brute-forced here (that was 36 + 36*36*12 extra shape_word calls,
-    # ballooning glyph-data.json from ~5.4MB to 63MB). Both compose cleanly
-    # at runtime from a base cluster + a mark's prefix/suffix recipe — see
-    # _build_marks() below and js/src/index.js's composeCluster().
-
-    # Independent vowels + anusvara / visarga
-    for v in INDEPENDENT_VOWELS + RARE_VOWELS:
-        inputs.append(v + ANUSVARA)
-        inputs.append(v + VISARGA)
-
-    # Consonants + anusvara / visarga
-    for c in CONSONANTS:
-        inputs.append(c + ANUSVARA)
-        inputs.append(c + VISARGA)
 
     # Deduplicate while preserving order
     seen: set[str] = set()
@@ -142,9 +156,7 @@ def _shape_all(inputs: list[str], font: str) -> dict:
             }
 
         result["clusters"][inp] = {
-            "glyphs": [
-                {"d": g["d"], "x": g["x"], "y": g["y"]} for g in trace["glyphs"]
-            ],
+            "glyphs": [{"d": g["d"], "x": g["x"], "y": g["y"]} for g in trace["glyphs"]],
             "advance": trace["totalAdvance"],
         }
         ok += 1
@@ -170,6 +182,7 @@ _COMPOSABLE_MARKS = [
     VIRAMA,
     *MATRAS,
     *RARE_MATRAS,
+    AU_LENGTH_MARK,  # ൗ — the suffix half of ൌ's decomposition (js/src/index.js's SPLIT_VOWEL_PARTS)
     VIRAMA + "യ",
     VIRAMA + "വ",
     VIRAMA + "ല",
@@ -218,9 +231,7 @@ def _build_marks(font: str) -> dict:
         # `shift`) — the placeholder's own on-screen width is an artifact of
         # the dotted-circle glyph, not something a real base should inherit.
         anchor = suffix_glyphs[0]["x"] if suffix_glyphs else shift
-        suffix = [
-            {"d": g["d"], "x": g["x"] - anchor, "y": g["y"]} for g in suffix_glyphs
-        ]
+        suffix = [{"d": g["d"], "x": g["x"] - anchor, "y": g["y"]} for g in suffix_glyphs]
         trailing_width = (trace["totalAdvance"] - anchor) if suffix_glyphs else 0.0
         marks[m] = {
             "shift": shift,

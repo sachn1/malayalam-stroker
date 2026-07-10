@@ -82,6 +82,29 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def _reference_glyphs(cluster: str, cluster_info: dict, marks: dict) -> list[dict]:
+    """Return the glyphs to use as the centering/straightening reference for `cluster`.
+
+    A single-character mark's own standalone entry includes HarfBuzz's
+    dotted-circle placeholder (see tools/build_glyph_data.py's
+    ``_standalone_inputs()``) alongside its real content glyph — the human
+    only traced the content, so the placeholder must be excluded here, or
+    it corrupts the distance field with a second, spurious "ink" blob the
+    gradient ascent can wander into (shows up as wiggle right where the
+    content starts, next to where the circle would have been). ``marks``
+    already knows, per mark, whether content is glyphs[0] (prefix marks,
+    which render before the circle) or glyphs[-1] (suffix marks, circle
+    first) — see ``_build_marks()``'s docstring in build_glyph_data.py.
+    """
+    glyphs = cluster_info["glyphs"]
+    if len(cluster) != 1 or len(glyphs) != 2:
+        return glyphs
+    mark = marks.get(cluster)
+    if not mark:
+        return glyphs
+    return [glyphs[0]] if mark["prefix"] else [glyphs[-1]]
+
+
 def _process_stroke(d: str, field, refs: list[dict], args: argparse.Namespace) -> str:
     """Run one stroke through the center/smooth/straighten stages, in that order."""
     if args.center or args.smooth:
@@ -115,6 +138,7 @@ def main() -> None:
     stroke_data: dict = json.loads(args.input.read_text(encoding="utf-8"))
     glyph_data: dict = json.loads(GLYPH_DATA.read_text(encoding="utf-8"))
     clusters = glyph_data["clusters"]
+    marks = glyph_data.get("marks", {})
 
     needs_dist_field = args.center or args.straighten
     out: dict = {}
@@ -125,9 +149,10 @@ def main() -> None:
         field = None
         refs: list[dict] = []
         if needs_dist_field and cluster_info is not None:
-            field = centering.make_dist_field(cluster_info["glyphs"])
+            ref_glyphs = _reference_glyphs(cluster, cluster_info, marks)
+            field = centering.make_dist_field(ref_glyphs)
             if args.straighten:
-                refs = ghost_reference.build_reference_segments(cluster_info["glyphs"], field)
+                refs = ghost_reference.build_reference_segments(ref_glyphs, field)
 
         new_strokes = [
             {"d": _process_stroke(s["d"], field, refs, args)} for s in entry.get("strokes", [])

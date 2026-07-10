@@ -28,6 +28,7 @@ HTML_SRC = ROOT / "tools" / "stroke-recorder.html"
 CSS_SRC = ROOT / "tools" / "stroke-recorder.css"
 JS_SRC = ROOT / "tools" / "stroke-recorder.js"
 GLYPH_DATA = ROOT / "js" / "src" / "glyph-data.json"
+STROKE_DATA_RAW = ROOT / "js" / "src" / "stroke-data.raw.json"
 OUT = ROOT / "tools" / "stroke-recorder-standalone.html"
 
 _HASH_COMMENT = "<!-- source-hash: {} (do not edit; run tools/build_standalone_recorder.py) -->"
@@ -46,6 +47,7 @@ def build() -> None:
     css = CSS_SRC.read_text(encoding="utf-8")
     js = JS_SRC.read_text(encoding="utf-8")
     glyph_data = GLYPH_DATA.read_text(encoding="utf-8")
+    stroke_data_raw = STROKE_DATA_RAW.read_text(encoding="utf-8")
 
     # Inline CSS
     html = re.sub(
@@ -54,18 +56,33 @@ def build() -> None:
         html,
     )
 
-    # Inject glyph-data as a pre-loaded JS variable before the main script,
-    # then patch the drop-zone so it auto-loads on page open.
+    # Inject glyph-data and the current stroke-data.raw.json as pre-loaded JS
+    # variables before the main script, then patch the drop-zone so it
+    # auto-loads on page open — bundling the raw strokes too (not just the
+    # glyph outlines) means the reduced-set filter and "already recorded"
+    # checkmarks are correct immediately, with no manual "Load existing
+    # strokes" step needed before recording the remaining gaps.
     preload_script = f"""<script>
-// Glyph data bundled at build time — no file drop needed.
+// Data bundled at build time — no file drop needed.
 const BUNDLED_GLYPH_DATA = {glyph_data};
+const BUNDLED_STROKE_DATA = {stroke_data_raw};
 </script>"""
 
     autoload_patch = """<script>
 // Auto-load bundled data once the recorder script has initialised.
 window.addEventListener("DOMContentLoaded", () => {
+  if (typeof BUNDLED_STROKE_DATA !== "undefined") {
+    existingStrokeData = BUNDLED_STROKE_DATA;
+    const count = Object.keys(existingStrokeData).length;
+    document.getElementById("merge-status").textContent =
+      `✓ ${count} existing cluster(s) loaded — export will merge`;
+  }
   if (typeof BUNDLED_GLYPH_DATA !== "undefined") {
     parseGlyphData(JSON.stringify(BUNDLED_GLYPH_DATA));
+    // Land directly on the first not-yet-recorded atom instead of index 0
+    // (almost always already-recorded) — removes any guesswork about where
+    // to start.
+    document.getElementById("next-missing-btn").click();
   }
 });
 </script>"""

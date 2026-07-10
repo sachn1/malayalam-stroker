@@ -101,6 +101,16 @@ code {
   font-size: 1rem;
 }
 
+.status-recorded {
+  color: #059669;
+  font-weight: 500;
+}
+
+.status-missing {
+  color: #b45309;
+  font-weight: 600;
+}
+
 #canvas-wrap {
   border: 1px solid #e0daf5;
   border-radius: 12px;
@@ -307,4 +317,29 @@ button#eraser-btn.active {
   font-size: 0.8rem;
   color: #059669;
   font-weight: 500;
+}
+
+/* ── Reduced-set filter row ── */
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.78rem;
+  color: #6b6591;
+  flex-wrap: wrap;
+}
+
+.filter-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+#filter-status {
+  font-weight: 500;
+  white-space: nowrap;
 }

@@ -63,6 +63,18 @@ def find_matching_standalone_glyph_x(ch: str, clusters: dict) -> float:
     return standalone_glyphs[-1].get("x", 0)
 
 
+def _char_dx(ch: str, target_gx: float, clusters: dict) -> float:
+    """Compute how far to shift `ch`'s own recorded stroke to `target_gx`."""
+    char_entry = clusters.get(ch)
+    if not char_entry:
+        return target_gx
+    if len(char_entry["glyphs"]) > 1:
+        standalone_content_x = find_matching_standalone_glyph_x(ch, clusters)
+        return target_gx - standalone_content_x
+    standalone_x = char_entry["glyphs"][0].get("x", 0) if char_entry["glyphs"] else 0
+    return target_gx - standalone_x
+
+
 def compose_per_glyph(
     cluster_key: str, cluster_entry: dict, stroke_data: dict, clusters: dict
 ) -> list[dict] | None:
@@ -70,14 +82,26 @@ def compose_per_glyph(
 
     Each character's stroke is offset to its target glyph position in the
     cluster (from ``glyph-data.json``). Returns ``None`` if any character is
-    missing a stroke, or the cluster resolves to fewer than 2 glyphs (a
-    single-glyph ligature can't be decomposed this way).
+    missing a stroke, the cluster resolves to fewer than 2 glyphs (a
+    single-glyph ligature can't be decomposed this way), or the character
+    count doesn't match the glyph count.
+
+    That last case is exactly the shape of a mark attachment (e.g. a
+    compound vowel sign contributing 2 glyphs — a prefix and a suffix piece
+    — for 1 character), which this function assumes never happens: it walks
+    `chars` and `glyphs` in lockstep, one glyph per character. Attempting it
+    anyway silently misassigns glyph slots — verified concretely for
+    "കൊ" (2 chars, 3 glyphs): ക's stroke was left unshifted instead of
+    moving to the middle slot, and ൊ's own stroke absorbed a shift meant for
+    a different sub-part, landing both in the wrong place. Per this
+    module's docstring, mark attachment is runtime's job (tryComposeStroke),
+    not this one's — bailing here leaves it to compose correctly there.
     """
     chars = list(cluster_key)
     if len(chars) < 2:
         return None
     glyphs = cluster_entry["glyphs"]
-    if len(glyphs) < 2:
+    if len(glyphs) < 2 or len(glyphs) != len(chars):
         return None
 
     composed_strokes: list[dict] = []
@@ -95,15 +119,7 @@ def compose_per_glyph(
             target_gx = glyphs[-1].get("x", 0)
             target_gy = glyphs[-1].get("y", 0)
 
-        char_entry = clusters.get(ch)
-        if char_entry and len(char_entry["glyphs"]) > 1:
-            standalone_content_x = find_matching_standalone_glyph_x(ch, clusters)
-            dx = target_gx - standalone_content_x
-        elif char_entry:
-            standalone_x = char_entry["glyphs"][0].get("x", 0) if char_entry["glyphs"] else 0
-            dx = target_gx - standalone_x
-        else:
-            dx = target_gx
+        dx = _char_dx(ch, target_gx, clusters)
         dy = target_gy
 
         for s in sub["strokes"]:

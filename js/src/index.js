@@ -237,6 +237,52 @@ function offsetSvgPath(d, dx, dy) {
 }
 
 /**
+ * Compound vowel signs decomposed into the simpler marks they're built from,
+ * in application order (each applied to the *result* of the previous one).
+ * ൊ/ോ/ൌ match their official Unicode canonical decomposition (NFD: ൊ→െ+ാ,
+ * ോ→േ+ാ, ൌ→െ+ൗ); ൈ has no such decomposition and, in this font, shapes as a
+ * single prefix-only glyph rather than two, so it's deliberately left out —
+ * it composes fine as its own atom already (see {@link tryComposeStroke}).
+ *
+ * @type {Record<string, string[]>}
+ */
+const SPLIT_VOWEL_PARTS = {
+  "ൊ": ["െ", "ാ"],
+  "ോ": ["േ", "ാ"],
+  "ൌ": ["െ", "ൗ"],
+};
+
+/**
+ * The x-position where a mark's own *content* glyph (as opposed to the
+ * dotted-circle placeholder HarfBuzz inserts for a base-less combining
+ * mark) naturally sits in that mark's standalone `clusters` entry.
+ *
+ * A suffix mark's standalone shaping is [circle, content] — HarfBuzz's own
+ * cluster order — so content is the *last* glyph, typically offset well
+ * past 0 (the circle's own advance width). A prefix mark's standalone
+ * shaping reorders to [content, circle] (prefix marks visually precede
+ * their base, circle or not), so content is already the *first* glyph, at
+ * x=0 — no correction needed there, which is why this is only read for the
+ * suffix case in {@link applyMarkStroke}.
+ *
+ * A hand-drawn stroke for that mark was traced over this same standalone
+ * ghost, so it's anchored at this x, not 0 — unlike the marks-table's own
+ * `suffix` glyph array, which `_build_marks()` (tools/build_glyph_data.py)
+ * already re-anchors to 0. Returns 0 (no correction) for marks with no
+ * standalone `clusters` entry at all (the 2-char subjoined forms
+ * ്യ/്വ/്ല, never added there — see `_standalone_inputs()`).
+ *
+ * @param {string} markKey
+ * @param {Record<string, object>} clusters
+ * @returns {number}
+ */
+function markContentAnchorX(markKey, clusters) {
+  const entry = clusters?.[markKey];
+  if (!entry || entry.glyphs.length < 2) return 0;
+  return entry.glyphs[entry.glyphs.length - 1].x;
+}
+
+/**
  * Compose a base cluster's *strokes* (not glyph outlines) with a trailing
  * mark's own recorded stroke, using the same shift/prefix/suffix recipe as
  * {@link composeMark}. This is what lets `stroke-data.json` stay small (just
@@ -247,30 +293,91 @@ function offsetSvgPath(d, dx, dy) {
  * Returns `null` for compound marks (both prefix and suffix parts) — only
  * one recorded stroke exists for those, and it can't be cleanly offset
  * without also warping the gap in the middle to match the base's width.
+ * {@link tryComposeStroke} handles that case instead, by applying the
+ * mark's {@link SPLIT_VOWEL_PARTS} one at a time through this function.
  *
  * @param {{d: string}[]} baseStrokes
  * @param {{ shift: number, prefix: object[], suffix: object[], trailingWidth: number }} mark
  * @param {{d: string}[]} markStrokes
  * @param {number} baseAdvance
- * @returns {{d: string}[] | null}
+ * @param {number} [markAnchorX] - See {@link markContentAnchorX}; only used for suffix marks.
+ * @returns {{ strokes: {d: string}[], advance: number } | null}
  */
-function composeMarkStroke(baseStrokes, mark, markStrokes, baseAdvance) {
+function applyMarkStroke(baseStrokes, mark, markStrokes, baseAdvance, markAnchorX = 0) {
   if (mark.prefix.length > 0 && mark.suffix.length > 0) return null;
   const shift = mark.shift;
   const composed = baseStrokes.map((s) => ({ d: offsetSvgPath(s.d, shift, 0) }));
-  if (mark.prefix.length > 0) {
-    return [...markStrokes.map((s) => ({ d: s.d })), ...composed];
-  }
-  const dx = shift + baseAdvance;
-  return [...composed, ...markStrokes.map((s) => ({ d: offsetSvgPath(s.d, dx, 0) }))];
+  const strokes =
+    mark.prefix.length > 0
+      ? [...markStrokes.map((s) => ({ d: s.d })), ...composed]
+      : [
+          ...composed,
+          ...markStrokes.map((s) => ({ d: offsetSvgPath(s.d, shift + baseAdvance - markAnchorX, 0) })),
+        ];
+  return { strokes, advance: shift + baseAdvance + mark.trailingWidth };
 }
 
 /**
- * Try composing a stroke for `cluster` from a shorter base already in
- * {@link STROKE_LIBRARY} plus a trailing mark's own recorded stroke —
- * mirrors {@link resolveSegments}'s glyph-level composition, one level up.
- * Composed results are cached into `STROKE_LIBRARY` under `cluster` so
- * repeated traces of the same word don't recompose it.
+ * Apply a sequence of single-sided marks (each looked up and offset via
+ * {@link applyMarkStroke}) to a base, one after another — used to compose a
+ * compound vowel sign from its {@link SPLIT_VOWEL_PARTS} instead of needing
+ * its own recorded stroke. Requires every part to already have a recorded
+ * stroke in {@link STROKE_LIBRARY} (e.g. "െ" and "ാ" for ൊ); returns `null`
+ * if any part is missing or its recipe is itself unexpectedly compound.
+ *
+ * @param {{d: string}[]} strokes
+ * @param {number} advance
+ * @param {string[]} markChars
+ * @param {Record<string, object>} marks
+ * @param {Record<string, object>} clusters
+ * @returns {{ strokes: {d: string}[], advance: number } | null}
+ */
+function applySequentialMarkStrokes(strokes, advance, markChars, marks, clusters) {
+  let result = { strokes, advance };
+  for (const mc of markChars) {
+    const mark = marks?.[mc];
+    const markEntry = STROKE_LIBRARY[mc];
+    if (!mark || !markEntry?.strokes?.length) return null;
+    result = applyMarkStroke(result.strokes, mark, markEntry.strokes, result.advance, markContentAnchorX(mc, clusters));
+    if (!result) return null;
+  }
+  return result;
+}
+
+/**
+ * Compose `markKey` directly onto `base` via its own recorded stroke and
+ * marks-table recipe (the common case: a single-sided mark like ാ/ി/ീ/്).
+ *
+ * @param {{d: string}[]} baseStrokes
+ * @param {number} baseAdvance
+ * @param {string} markKey
+ * @param {Record<string, object>} marks
+ * @param {Record<string, object>} clusters
+ * @returns {{ strokes: {d: string}[], advance: number } | null}
+ */
+function tryDirectMarkStroke(baseStrokes, baseAdvance, markKey, marks, clusters) {
+  const mark = marks?.[markKey];
+  const markEntry = STROKE_LIBRARY[markKey];
+  if (!mark || !markEntry?.strokes?.length) return null;
+  return applyMarkStroke(baseStrokes, mark, markEntry.strokes, baseAdvance, markContentAnchorX(markKey, clusters));
+}
+
+/**
+ * Try composing a stroke for `cluster` from a shorter base plus a trailing
+ * mark — mirrors {@link resolveSegments}'s glyph-level composition, one
+ * level up. The base isn't required to already be in {@link STROKE_LIBRARY}
+ * — if it's itself a multi-character cluster with no stroke yet (e.g.
+ * "ദ്യ" while composing "ദ്യു"), it's composed recursively first, so a
+ * chain of marks (conjunct + subjoined form + vowel sign) resolves down to
+ * its recorded atoms instead of bailing at the first not-yet-cached link.
+ * Recursion always strips at least one character per call, so it bottoms
+ * out within `cluster.length` levels.
+ *
+ * A compound 1-char mark (both prefix and suffix, e.g. ൊ/ോ/ൌ) is composed
+ * via its {@link SPLIT_VOWEL_PARTS} instead of its own stroke — see {@link
+ * applySequentialMarkStrokes}. Composed results are cached into {@link
+ * STROKE_LIBRARY} under `cluster` so repeated traces of the same word (or
+ * repeated use of the same intermediate base) don't recompose it.
  *
  * @param {string} cluster
  * @param {{ clusters: Record<string, object>, marks: Record<string, object> }} glyphData
@@ -282,14 +389,17 @@ function tryComposeStroke(cluster, glyphData) {
     if (cluster.length <= markLen) continue;
     const baseKey = cluster.slice(0, -markLen);
     const markKey = cluster.slice(-markLen);
-    const base = STROKE_LIBRARY[baseKey];
-    const mark = marks?.[markKey];
-    const markEntry = STROKE_LIBRARY[markKey];
+    const base = STROKE_LIBRARY[baseKey] ?? tryComposeStroke(baseKey, glyphData);
     const baseGlyphEntry = clusters[baseKey];
-    if (!base?.strokes?.length || !mark || !markEntry?.strokes?.length || !baseGlyphEntry) continue;
-    const strokes = composeMarkStroke(base.strokes, mark, markEntry.strokes, baseGlyphEntry.advance);
-    if (strokes) {
-      const entry = { strokes };
+    if (!base?.strokes?.length || !baseGlyphEntry) continue;
+
+    const splitParts = markLen === 1 ? SPLIT_VOWEL_PARTS[markKey] : undefined;
+    const result = splitParts
+      ? applySequentialMarkStrokes(base.strokes, baseGlyphEntry.advance, splitParts, marks, clusters)
+      : tryDirectMarkStroke(base.strokes, baseGlyphEntry.advance, markKey, marks, clusters);
+
+    if (result) {
+      const entry = { strokes: result.strokes };
       STROKE_LIBRARY[cluster] = entry;
       return entry;
     }
@@ -298,28 +408,102 @@ function tryComposeStroke(cluster, glyphData) {
 }
 
 /**
+ * How far to shift character `ch`'s own recorded stroke so it lands at
+ * `targetGx` within a larger cluster — mirrors
+ * tools/.../stroke_compose.py's `_char_dx` exactly (same anchor
+ * correction for a multi-glyph standalone entry, e.g. a mark's
+ * circle+content ghost — see {@link markContentAnchorX}).
+ *
+ * @param {string} ch
+ * @param {number} targetGx
+ * @param {Record<string, object>} clusters
+ * @returns {number}
+ */
+function charDx(ch, targetGx, clusters) {
+  const entry = clusters[ch];
+  if (!entry) return targetGx;
+  if (entry.glyphs.length > 1) {
+    return targetGx - entry.glyphs[entry.glyphs.length - 1].x;
+  }
+  return targetGx - (entry.glyphs[0]?.x ?? 0);
+}
+
+/**
+ * Last-resort composition: cluster not resolvable as base+mark (see {@link
+ * tryComposeStroke}), so fall back to treating every character as its own
+ * independent atom and placing each one's own recorded stroke at its glyph
+ * slot — mirrors tools/.../stroke_compose.py's `compose_per_glyph` (the
+ * offline bake's equivalent fallback), restricted the same way: only when
+ * the character count matches the glyph count, since a mismatch means some
+ * character actually contributes more than one glyph (a mark attachment,
+ * not independent characters side by side — see that function's docstring
+ * for the concretely-verified failure mode of ignoring this).
+ *
+ * However imperfect the result (no font ligatures, just each atom's own
+ * shape offset into place), it's still each atom in the position the font
+ * says it belongs — closer to the real word than the plain outline-trace
+ * fallback for any cluster where every character actually has its own
+ * recorded stroke.
+ *
+ * @param {string} cluster
+ * @param {{ clusters: Record<string, object>, marks: Record<string, object> }} glyphData
+ * @returns {{ strokes: {d: string}[] } | null}
+ */
+function tryComposeFromCharacters(cluster, glyphData) {
+  const { clusters } = glyphData;
+  const clusterEntry = clusters[cluster];
+  const chars = [...cluster];
+  if (chars.length < 2 || !clusterEntry || clusterEntry.glyphs.length !== chars.length) return null;
+
+  const strokes = [];
+  for (const [i, ch] of chars.entries()) {
+    const sub = STROKE_LIBRARY[ch] ?? tryComposeStroke(ch, glyphData);
+    if (!sub?.strokes?.length) return null;
+    const g = clusterEntry.glyphs[i];
+    const dx = charDx(ch, g.x, clusters);
+    for (const s of sub.strokes) strokes.push({ d: offsetSvgPath(s.d, dx, g.y) });
+  }
+
+  const entry = { strokes };
+  STROKE_LIBRARY[cluster] = entry;
+  return entry;
+}
+
+/**
  * Resolve `text` into an ordered list of `{ cluster, entry }` pairs.
  *
- * Tries a direct longest-match lookup first (4-char conjunct+matra → 3-char
- * conjunct → 2-char consonant+matra → 1-char). A character with no direct
- * match at any length — necessarily a mark, since a real base always has at
- * least a 1-char entry — is composed onto the *previously matched* segment
- * (base and mark are adjacent by construction, so "the segment just pushed"
- * is exactly the base this mark attaches to) — see {@link composeMark}. Mark
- * lookup tries a 2-char tail first (subjoined conjunct forms — virama plus a
- * reduced ya/va/la, e.g. "്യ") before falling back to 1-char (virama or a
- * dependent vowel sign alone), same longest-match precedence as direct
- * cluster lookups. Some marks (ു/ൂ/ൃ, and subjoined la) fuse into a glyph
- * unique to the specific preceding consonant in real shaping — composing
- * them generically can't reproduce that exact fused glyph, so they render
- * as the base's own glyph plus the mark's separate standalone shape
- * instead: less tightly kerned than a true font ligature, but still correct
- * and legible (see glyphData.marks / tools/build_glyph_data.py's
- * _build_marks() docstring for the full derivation). Composition is skipped
- * only for marks with a prefix component when the base is more than one
- * glyph — that reordering isn't safe on a non-ligating multi-glyph
- * conjunct. A mark with nothing to attach to (no previous segment, or that
- * unsupported prefix+multi-glyph case) is skipped with a console warning.
+ * Tries a direct longest-match lookup first, but only at 4/3/2 chars
+ * (conjunct+matra → conjunct → consonant+matra) — 1-char is deliberately
+ * excluded here even though virama and every matra now have their own
+ * `clusters` entry (added so the recorder has a real ghost to record them
+ * against, see tools/build_glyph_data.py's `_standalone_inputs()`). A
+ * length-1 slice that's *also* a registered mark must get first crack at
+ * attaching onto the previously matched segment below — matching it
+ * directly here instead would render its isolated dotted-circle-placeholder
+ * shape standalone, wrongly splitting it off the consonant it belongs to
+ * (e.g. "ദ്യു" as "ദ്യ" + orphaned "ു" instead of one composed cluster).
+ *
+ * A character with no 4/3/2-length direct match is composed onto the
+ * *previously matched* segment (base and mark are adjacent by construction,
+ * so "the segment just pushed" is exactly the base this mark attaches to)
+ * — see {@link composeMark}. Mark lookup tries a 2-char tail first
+ * (subjoined conjunct forms — virama plus a reduced ya/va/la, e.g. "്യ")
+ * before falling back to 1-char (virama or a dependent vowel sign alone).
+ * Some marks (ു/ൂ/ൃ, and subjoined la) fuse into a glyph unique to the
+ * specific preceding consonant in real shaping — composing them generically
+ * can't reproduce that exact fused glyph, so they render as the base's own
+ * glyph plus the mark's separate standalone shape instead: less tightly
+ * kerned than a true font ligature, but still correct and legible (see
+ * glyphData.marks / tools/build_glyph_data.py's _build_marks() docstring
+ * for the full derivation). Composition is skipped only for marks with a
+ * prefix component when the base is more than one glyph — that reordering
+ * isn't safe on a non-ligating multi-glyph conjunct.
+ *
+ * Only once mark composition doesn't apply (no previous segment — start of
+ * text — or that unsupported prefix+multi-glyph case) does a length-1
+ * direct match get tried, rendering the character's own isolated shape
+ * (correct for e.g. a stray mark with nothing to attach to). Failing that,
+ * the character is skipped with a console warning.
  *
  * @param {string} text
  * @param {Record<string, unknown>} clusters - The `clusters` map from glyph-data.json.
@@ -331,7 +515,7 @@ function resolveSegments(text, clusters, marks) {
   let i = 0;
   while (i < text.length) {
     let matched = false;
-    for (const len of [4, 3, 2, 1]) {
+    for (const len of [4, 3, 2]) {
       if (i + len > text.length) continue;
       const slice = text.slice(i, i + len);
       if (clusters[slice]) {
@@ -361,7 +545,14 @@ function resolveSegments(text, clusters, marks) {
     }
     if (composed) continue;
 
-    console.warn(`malayalam-stroker: no glyph data for ${JSON.stringify(text[i])} in ${JSON.stringify(text)} — skipping`);
+    const single = text[i];
+    if (clusters[single]) {
+      segs.push({ cluster: single, entry: clusters[single] });
+      i++;
+      continue;
+    }
+
+    console.warn(`malayalam-stroker: no glyph data for ${JSON.stringify(single)} in ${JSON.stringify(text)} — skipping`);
     i++;
   }
   return segs;
@@ -513,7 +704,9 @@ export function createStrokeWriter(container, options = {}) {
     const glyphUnits = segGroups.map((grp) => {
       const authored = OUTLINE_ONLY
         ? null
-        : (STROKE_LIBRARY[grp.cluster] ?? tryComposeStroke(grp.cluster, glyphData));
+        : (STROKE_LIBRARY[grp.cluster] ??
+           tryComposeStroke(grp.cluster, glyphData) ??
+           tryComposeFromCharacters(grp.cluster, glyphData));
 
       // Authored path: one group element translated to the cluster origin.
       if (authored?.strokes?.length) {
@@ -700,3 +893,5 @@ export function createStrokeWriter(container, options = {}) {
 
   return { load, loadStrokes, play, replay, cancel, destroy };
 }
+
+

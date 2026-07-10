@@ -54,6 +54,29 @@ const strokeData = {};
 let existingStrokeData = null;
 
 /**
+ * Get `strokeData[clusterStr]`, seeding it from `existingStrokeData` the
+ * first time a character with already-recorded strokes is touched (viewed,
+ * drawn on, erased, or undone).
+ *
+ * Without this, navigating to an already-recorded character and drawing an
+ * additional stroke would silently start from an empty array — the
+ * existing strokes wouldn't show on the canvas, and worse, export would
+ * overwrite them entirely with just the new stroke (export layers
+ * `strokeData` over `existingStrokeData` per-cluster, not per-stroke — see
+ * the export-btn handler).
+ *
+ * @param {string} clusterStr
+ * @returns {{ d: string }[]}
+ */
+function ensureStrokes(clusterStr) {
+  if (!strokeData[clusterStr]) {
+    const existing = existingStrokeData?.[clusterStr]?.strokes;
+    strokeData[clusterStr] = existing ? existing.map((s) => ({ d: s.d })) : [];
+  }
+  return strokeData[clusterStr];
+}
+
+/**
  * Per-cluster stack of strokes removed by Undo, restorable via Redo.
  * Cleared for a cluster whenever a new stroke is drawn, or its strokes are
  * cleared/erased — same rule as any standard undo/redo history.
@@ -67,6 +90,64 @@ let eraserMode = false;
 
 /** Eraser radius in font units. */
 const ERASER_RADIUS = 30;
+
+/** Whether the dropdown/nav show every glyph-data cluster instead of just the reduced atom set. */
+let showAllClusters = false;
+
+/**
+ * Clusters added this session via "+ Add" — always treated as atoms
+ * regardless of the reduced-set filter, so a deliberately-added new
+ * combination is never hidden from its own recording session.
+ *
+ * @type {Set<string>}
+ */
+const manuallyAddedClusters = new Set();
+
+/**
+ * Compound vowel signs composed from simpler marks at runtime (see
+ * js/src/index.js's SPLIT_VOWEL_PARTS) — never need their own recorded
+ * stroke, so they're excluded from the atom set even though they are
+ * single codepoints.
+ */
+const DEPRECATED_ATOMS = new Set(["ൊ", "ോ", "ൌ"]); // ൊ ോ ൌ
+
+/**
+ * Whether `clusterStr` belongs to the reduced "needs its own hand-drawn
+ * stroke" atom set, as opposed to a combination that composes automatically
+ * from other atoms at runtime (see README's "Composing combinations instead
+ * of pre-shaping every one").
+ *
+ * Single codepoints (letters, digits, virama, matras) are always atoms —
+ * they can't be decomposed further. A multi-character cluster is an atom
+ * only if it's already known to need its own stroke: either it's already
+ * recorded in the loaded stroke-data.raw.json (the existing 292-ish
+ * hand-picked fused/conjunct forms), or it was just added this session via
+ * "+ Add".
+ *
+ * @param {string} clusterStr
+ * @returns {boolean}
+ */
+function isAtom(clusterStr) {
+  if (DEPRECATED_ATOMS.has(clusterStr)) return false;
+  if (clusterStr.length === 1) return true;
+  if (manuallyAddedClusters.has(clusterStr)) return true;
+  return !!existingStrokeData?.[clusterStr]?.strokes?.length;
+}
+
+/**
+ * Indices into `trace.glyphs` currently visible, honouring `showAllClusters`.
+ *
+ * @returns {number[]}
+ */
+function visibleGlyphIndices() {
+  if (!trace) return [];
+  if (showAllClusters) return trace.glyphs.map((_, i) => i);
+  const out = [];
+  for (const [i, g] of trace.glyphs.entries()) {
+    if (isAtom(g.clusterStr)) out.push(i);
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // SVG helpers
@@ -237,18 +318,41 @@ function loadFile(file) {
 // ---------------------------------------------------------------------------
 
 /**
- * Populate the jump-to dropdown with all clusters in the current trace.
+ * Whether `clusterStr` already has a recorded stroke, in this session or the
+ * loaded stroke-data.raw.json.
+ *
+ * @param {string} clusterStr
+ * @returns {boolean}
+ */
+function isRecorded(clusterStr) {
+  if (strokeData[clusterStr]?.length) return true;
+  return !!existingStrokeData?.[clusterStr]?.strokes?.length;
+}
+
+/**
+ * Populate the jump-to dropdown with visible clusters (honouring the
+ * reduced-set filter), each flagged with whether it's already recorded.
  */
 function populateSelect() {
   const sel = document.getElementById("glyph-select");
   sel.innerHTML = "";
-  for (const [i, g] of trace.glyphs.entries()) {
+  const visible = visibleGlyphIndices();
+  for (const [pos, i] of visible.entries()) {
+    const g = trace.glyphs[i];
     const opt = document.createElement("option");
     opt.value = String(i);
-    opt.textContent = `${g.clusterStr}  ·  ${i + 1} / ${trace.glyphs.length}`;
+    const mark = isRecorded(g.clusterStr) ? "✓" : "○";
+    opt.textContent = `${mark} ${g.clusterStr}  ·  ${pos + 1} / ${visible.length}`;
     sel.appendChild(opt);
   }
   sel.value = String(glyphIndex);
+
+  const status = document.getElementById("filter-status");
+  if (status) {
+    status.textContent = showAllClusters
+      ? `showing all ${trace.glyphs.length}`
+      : `${visible.length} atoms (of ${trace.glyphs.length} total clusters)`;
+  }
 }
 
 /**
@@ -305,8 +409,10 @@ function renderGlyph() {
     svg.appendChild(ghost);
   }
 
-  // Previously recorded strokes with numbered start-point badges
-  const strokes = strokeData[g.clusterStr] ?? [];
+  // Previously recorded strokes with numbered start-point badges — seeded
+  // from existingStrokeData on first visit via ensureStrokes, so loaded
+  // strokes actually show up here instead of only at export time.
+  const strokes = ensureStrokes(g.clusterStr);
   for (const [idx, s] of strokes.entries()) {
     svg.appendChild(
       svgEl("path", {
@@ -351,17 +457,24 @@ function renderGlyph() {
   previewPath = null;
   currentPts = null;
 
+  const visible = visibleGlyphIndices();
+  const pos = visible.indexOf(glyphIndex);
+  const posLabel = pos === -1 ? `${glyphIndex + 1} / ${trace.glyphs.length}` : `${pos + 1} / ${visible.length}`;
+  const recorded = isRecorded(g.clusterStr);
+  const statusLabel = recorded
+    ? `<span class="status-recorded">✓ already recorded</span>`
+    : `<span class="status-missing">○ needs a stroke</span>`;
   document.getElementById("glyph-label").innerHTML =
-    `<strong>${g.clusterStr}</strong> &nbsp;·&nbsp; ${glyphIndex + 1} / ${trace.glyphs.length}`;
+    `<strong>${g.clusterStr}</strong> &nbsp;·&nbsp; ${posLabel} &nbsp;·&nbsp; ${statusLabel}`;
 
   // Sync dropdown selection
   const sel = document.getElementById("glyph-select");
-  if (sel.options.length === trace.glyphs.length) sel.value = String(glyphIndex);
+  sel.value = String(glyphIndex);
 
   updateCounts();
 
-  document.getElementById("prev-btn").disabled = glyphIndex === 0;
-  document.getElementById("next-btn").disabled = glyphIndex === trace.glyphs.length - 1;
+  document.getElementById("prev-btn").disabled = pos <= 0;
+  document.getElementById("next-btn").disabled = pos === -1 || pos === visible.length - 1;
 
   svg.addEventListener("pointerdown", onPointerDown);
   svg.addEventListener("pointermove", onPointerMove);
@@ -374,7 +487,7 @@ function renderGlyph() {
  */
 function updateCounts() {
   const g = trace.glyphs[glyphIndex];
-  const n = (strokeData[g.clusterStr] ?? []).length;
+  const n = ensureStrokes(g.clusterStr).length;
   document.getElementById("stroke-count").textContent =
     `${n} stroke${n !== 1 ? "s" : ""} recorded`;
   document.getElementById("undo-btn").disabled = n === 0;
@@ -417,8 +530,8 @@ function samplePathPoints(d) {
  */
 function eraseAt(ex, ey) {
   const g = trace.glyphs[glyphIndex];
-  const strokes = strokeData[g.clusterStr];
-  if (!strokes || strokes.length === 0) return;
+  const strokes = ensureStrokes(g.clusterStr);
+  if (strokes.length === 0) return;
 
   const r2 = ERASER_RADIUS * ERASER_RADIUS;
   const newStrokes = [];
@@ -564,8 +677,7 @@ function onPointerUp(e) {
   }
 
   const g = trace.glyphs[glyphIndex];
-  if (!strokeData[g.clusterStr]) strokeData[g.clusterStr] = [];
-  strokeData[g.clusterStr].push({ d: smoothPath(pts) });
+  ensureStrokes(g.clusterStr).push({ d: smoothPath(pts) });
   redoStacks[g.clusterStr] = [];
   renderGlyph();
 }
@@ -612,21 +724,44 @@ document.addEventListener("DOMContentLoaded", () => {
   fileInput.addEventListener("change", () => loadFile(fileInput.files[0]));
 
   document.getElementById("prev-btn").addEventListener("click", () => {
-    if (glyphIndex > 0) {
-      glyphIndex--;
+    const visible = visibleGlyphIndices();
+    const pos = visible.indexOf(glyphIndex);
+    if (pos > 0) {
+      glyphIndex = visible[pos - 1];
       renderGlyph();
     }
   });
   document.getElementById("next-btn").addEventListener("click", () => {
-    if (glyphIndex < (trace?.glyphs.length ?? 0) - 1) {
-      glyphIndex++;
+    const visible = visibleGlyphIndices();
+    const pos = visible.indexOf(glyphIndex);
+    if (pos !== -1 && pos < visible.length - 1) {
+      glyphIndex = visible[pos + 1];
       renderGlyph();
     }
   });
+  document.getElementById("show-all-toggle").addEventListener("change", (e) => {
+    showAllClusters = e.target.checked;
+    populateSelect();
+    renderGlyph();
+  });
+  document.getElementById("next-missing-btn").addEventListener("click", () => {
+    const visible = visibleGlyphIndices();
+    const pos = visible.indexOf(glyphIndex);
+    // Search forward from just after the current position, wrapping once,
+    // for the next visible cluster with no recorded stroke yet.
+    const order = [...visible.slice(pos + 1), ...visible.slice(0, pos + 1)];
+    const next = order.find((i) => !isRecorded(trace.glyphs[i].clusterStr));
+    if (next === undefined) {
+      alert("Nothing missing in the current view — every visible cluster already has a stroke.");
+      return;
+    }
+    glyphIndex = next;
+    renderGlyph();
+  });
   document.getElementById("undo-btn").addEventListener("click", () => {
     const g = trace.glyphs[glyphIndex];
-    const strokes = strokeData[g.clusterStr];
-    if (!strokes || strokes.length === 0) return;
+    const strokes = ensureStrokes(g.clusterStr);
+    if (strokes.length === 0) return;
     const popped = strokes.pop();
     (redoStacks[g.clusterStr] ??= []).push(popped);
     renderGlyph();
@@ -635,8 +770,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const g = trace.glyphs[glyphIndex];
     const stack = redoStacks[g.clusterStr];
     if (!stack || stack.length === 0) return;
-    if (!strokeData[g.clusterStr]) strokeData[g.clusterStr] = [];
-    strokeData[g.clusterStr].push(stack.pop());
+    ensureStrokes(g.clusterStr).push(stack.pop());
     renderGlyph();
   });
   document.getElementById("clear-btn").addEventListener("click", () => {
@@ -722,6 +856,7 @@ document.addEventListener("DOMContentLoaded", () => {
       glyphIndex = existingIdx;
     } else {
       trace.glyphs.push({ clusterStr: cluster, paths: [], advance: trace.unitsPerEm * 0.85 });
+      manuallyAddedClusters.add(cluster);
       glyphIndex = trace.glyphs.length - 1;
     }
     input.value = "";
@@ -746,6 +881,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const count = Object.keys(existingStrokeData).length;
         document.getElementById("merge-status").textContent =
           `✓ ${count} existing cluster(s) loaded — export will merge`;
+        // Loaded strokes redefine which multi-char clusters count as atoms
+        // (see isAtom) and which show as already-recorded — refresh both.
+        if (trace) {
+          populateSelect();
+          renderGlyph();
+        }
         // Refresh textarea if it is already visible
         const out = document.getElementById("export-output").value;
         if (out) document.getElementById("export-btn").click();
