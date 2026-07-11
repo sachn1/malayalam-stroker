@@ -16,7 +16,8 @@ import { createStrokeWriter, STROKE_LIBRARY } from "../js/src/index.js";
 const glyphDataResp = await fetch("../js/src/glyph-data.json");
 const glyphData = await glyphDataResp.json();
 
-const writer = createStrokeWriter(document.getElementById("stage"), { glyphData });
+const stage = document.getElementById("stage");
+let writer = createStrokeWriter(stage, { glyphData });
 const form = document.getElementById("traceForm");
 const input = document.getElementById("wordInput");
 const status = document.getElementById("status");
@@ -101,6 +102,56 @@ if (logoStage) {
 }
 
 // ---------------------------------------------------------------------------
+// Controls — speed / thickness / repeat
+// ---------------------------------------------------------------------------
+
+const speedCtl = document.getElementById("speedCtl");
+const speedVal = document.getElementById("speedVal");
+const thicknessCtl = document.getElementById("thicknessCtl");
+const thicknessVal = document.getElementById("thicknessVal");
+const countCtl = document.getElementById("countCtl");
+
+/** Current per-play options from the speed slider + repeat select. */
+function playOptions() {
+  return { speed: Number(speedCtl.value), count: Number(countCtl.value) };
+}
+
+speedCtl.addEventListener("input", () => {
+  speedVal.textContent = `${Number(speedCtl.value)}×`;
+});
+
+/**
+ * Rough human label for a strokeWidth fraction, so the slider reads as
+ * "thin/medium/thick" instead of an opaque number like 0.022.
+ *
+ * @param {number} v
+ * @returns {string}
+ */
+function thicknessLabel(v) {
+  if (v < 0.018) return "thin";
+  if (v < 0.03) return "medium";
+  if (v < 0.042) return "thick";
+  return "marker";
+}
+
+// strokeWidth is fixed at writer creation (it sizes every stroke element the
+// stage builds), so changing it means a fresh writer on the same stage —
+// cheap, since the parsed glyphData object is shared and STROKE_LIBRARY is
+// module-global. `change` (not `input`) so it fires once per adjustment, not
+// per pixel of slider drag.
+thicknessCtl.addEventListener("input", () => {
+  thicknessVal.textContent = thicknessLabel(Number(thicknessCtl.value));
+});
+thicknessCtl.addEventListener("change", () => {
+  writer.cancel();
+  writer = createStrokeWriter(stage, {
+    glyphData,
+    strokeWidth: Number(thicknessCtl.value),
+  });
+  traceWord(input.value);
+});
+
+// ---------------------------------------------------------------------------
 // Trace
 // ---------------------------------------------------------------------------
 
@@ -115,7 +166,7 @@ async function traceWord(word) {
   status.textContent = "";
   btn.disabled = true;
   try {
-    await writer.play(word);
+    await writer.play(word, playOptions());
   } catch (err) {
     status.textContent = err.message;
   } finally {
@@ -135,7 +186,7 @@ document.querySelectorAll(".chips button").forEach((b) =>
   })
 );
 
-document.getElementById("replay").addEventListener("click", () => writer.replay());
+document.getElementById("replay").addEventListener("click", () => writer.replay(playOptions()));
 
 // ---------------------------------------------------------------------------
 // Stroke library drag-and-drop

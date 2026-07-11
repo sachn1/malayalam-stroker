@@ -23,6 +23,32 @@ it forever).
   positioned as a build-time-only tool, so this may never be worth doing
   for it specifically).
 
+## Learning features
+
+- **"Vanilla form" tooltips for fused/compound clusters** (opt-in, e.g.
+  `explain: true` on `createStrokeWriter`; default off). Malayalam can write
+  the same thing fused or spelled out — a conjunct like ഴ്ച where ച written bellow ഴ is nothing but ഴ + ് + ച and a learner meeting the fused shape has no way to know that. A small tap/click
+  affordance (ⓘ per cluster; hover alone won't work on tablets) showing the
+  cluster's parts *as rendered glyphs* (standalone entries already exist in
+  glyph-data.json) bridges that gap: "this shape, in its vanilla form, is
+  these parts."
+
+  Deliberately curated, not blanket: per the project owner, only *some*
+  cluster types genuinely confuse (ു/ൂ-type fused vowel signs, chandrakkala
+  conjuncts, ...), and they'll label/select which categories warrant a
+  tooltip — so the design needs an inclusion list (by mark/cluster type, not
+  per-cluster hand-authoring), not "tooltip on everything."
+
+  Implementation sketch: decomposition comes free from the cluster string
+  itself (the *text-level* Unicode sequence — correct even for true
+  ligatures like ക്ഷ where stroke composition is bypassed); the only new
+  data is a small display-name table for marks (chandrakkala, each matra,
+  anusvaram, ...). Also expose the raw data as a public
+  `writer.explain(cluster)` API so embedders can build their own UI.
+  Optional later flourish (not the core of the feature): tag composed
+  strokes with their source character so the tooltip can highlight which
+  strokes belong to which part.
+
 ## Multi-language support
 
 Everything Malayalam-specific currently lives in one place per layer:

@@ -139,6 +139,46 @@ button:disabled {
   border: 1px solid #af95db;
 }
 
+/* ── Trace controls (speed / thickness / repeat) ── */
+
+#controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+  font-size: 0.78rem;
+  color: #6b6591;
+}
+
+#controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+#controls input[type="range"] {
+  width: 90px;
+  accent-color: #6d28d9;
+}
+
+#controls select {
+  font: inherit;
+  color: #6b6591;
+  border: 1px solid #e0daf5;
+  border-radius: 6px;
+  padding: 0.15rem 0.3rem;
+  background: #fff;
+}
+
+.ctl-val {
+  min-width: 3.2em;
+  text-align: left;
+  color: #6d28d9;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Stroke library drop zone ── */
 
 #lib-bar {

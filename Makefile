@@ -94,8 +94,10 @@ ci: ci-py ci-js
 # recorder (tools/stroke-recorder.html) reachable through it too — serve.py
 # prints both URLs on startup for exactly this reason. `record` is just a
 # more discoverable name for anyone who only wants the recorder.
+# Runs inside the poetry venv: serve.py imports malayalam_stroker (uharfbuzz)
+# for its /api/shape endpoint, which a bare system python3 won't have.
 demo record:
-	python3 demo/serve.py
+	cd python && poetry run python ../demo/serve.py
 
 build-glyph-data:
 	cd python && poetry run python ../tools/build_glyph_data.py $(FONT)

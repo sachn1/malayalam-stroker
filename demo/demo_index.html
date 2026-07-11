@@ -34,6 +34,28 @@
     <div id="stage"></div>
     <button id="replay" type="button">↺ Replay</button>
 
+    <div id="controls">
+      <label>
+        Speed
+        <input id="speedCtl" type="range" min="0.25" max="3" step="0.25" value="1" />
+        <span id="speedVal" class="ctl-val">1×</span>
+      </label>
+      <label>
+        Thickness
+        <input id="thicknessCtl" type="range" min="0.010" max="0.050" step="0.004" value="0.022" />
+        <span id="thicknessVal" class="ctl-val">medium</span>
+      </label>
+      <label>
+        Repeat
+        <select id="countCtl">
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+          <option value="5">5×</option>
+        </select>
+      </label>
+    </div>
+
     <div id="lib-bar">
       <p>Load hand-authored strokes from the recorder:</p>
       <label id="lib-drop">
