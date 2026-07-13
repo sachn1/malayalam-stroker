@@ -61,7 +61,7 @@ verbose = 0
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.6.0"
 interrogate = "^1.7.0"
-pytest = "^8.0"
+pytest = "^9.0"
 pytest-cov = "^6.0"
 ruff = "0.9.10"  # pinned to match .pre-commit-config.yaml's ruff-pre-commit rev
 # python marker only because commitizen declares <4.0 and this project doesn't
