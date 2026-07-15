@@ -66,6 +66,21 @@ def _standalone_inputs() -> list[str]:
     # needing their own recorded stroke.
     inputs.append(VIRAMA)
     inputs += [m for m in MATRAS + RARE_MATRAS if m not in _SPLIT_VOWELS]
+
+    # ്ര (subjoined ra) - same "give the recorder a real ghost" reasoning as
+    # above, extended to a 2-codepoint mark for the first time. Every
+    # existing subjoined conjunct mark (്യ/്വ/്ല) was recorded free-hand
+    # with no reference ghost at all - deliberately not changing that
+    # already-recorded, already-working data by adding them here too. This
+    # is scoped to ്ര alone, the one mark that doesn't have a stroke yet.
+    inputs.append(VIRAMA + "ര")
+
+    # A plain space shapes to a real advance width with zero glyphs (an
+    # empty "d") - registering it as an ordinary cluster gives multi-word
+    # text a real gap between words for free, with no special-casing needed
+    # in resolveSegments/buildTrace: it just falls through the existing
+    # single-character direct-match path like any other 1-char cluster.
+    inputs.append(" ")
     return inputs
 
 
@@ -178,6 +193,21 @@ def _shape_all(inputs: list[str], font: str) -> dict:
 #: real text). ്ല is mixed (22/36 simple-suffix, 12/36 font-specific
 #: fusion, 2/36 three-glyph outliers) - uses the same "compose as separate
 #: entities" fallback as ു/ൂ/ൃ below.
+#:
+#: ്ര (subjoined ra) shapes as a *prefix* mark (the r-glyph before the
+#: dotted-circle placeholder, like െ/േ/ൈ) rather than a suffix like
+#: ്യ/്വ/്ല - verified only 17/36 consonants get this plain prefix-curl
+#: rendering when composed; the other 19 fuse into a font-specific ligature
+#: glyph unrelated to the base's own shape (same category as ു/ൂ/ൃ below).
+#: Composing it generically for those 19 won't reproduce the font's exact
+#: ligature, but - per the same "atomic decomposition is a legitimate way
+#: to hand-write it, not an error" reasoning already applied to every other
+#: mark in this table - drawing the recorded ra-curl before the base's own
+#: recorded stroke is still a correct way to write the conjunct by hand.
+#: Requires its own stroke recording (record "്ര" via the stroke-recorder's
+#: "Add custom cluster" field, same as ്യ/്വ/്ല were) before any base can
+#: compose with it - this entry alone only supplies the glyph/positioning
+#: recipe, not a stroke.
 _COMPOSABLE_MARKS = [
     VIRAMA,
     *MATRAS,
@@ -186,6 +216,7 @@ _COMPOSABLE_MARKS = [
     VIRAMA + "യ",
     VIRAMA + "വ",
     VIRAMA + "ല",
+    VIRAMA + "ര",
     ANUSVARA,  # ം - only pre-shaped as a *direct* cluster for single-char bases  # noqa: RUF003
     VISARGA,  # ഃ - (_anusvara_visarga_inputs); a conjunct base needs this recipe instead
 ]
