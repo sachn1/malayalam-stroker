@@ -4,8 +4,11 @@ name: Publish to npm
 # effectively permanent, so this deliberately mirrors `make bump` being a
 # manual, deliberate action rather than continuous per-commit automation.
 #
-# One-time setup: add an npm "Automation" token (from npmjs.com -> Access
-# Tokens) as the repo secret NPM_TOKEN.
+# Auth: npm Trusted Publishing (OIDC) - no NPM_TOKEN secret, nothing to
+# rotate or leak. One-time setup on npmjs.com: the jayasree package ->
+# Settings -> Trusted Publisher -> GitHub Actions -> org "sachn1", repo
+# "jayasree", workflow "publish.yml". Requires npm CLI >=11.5.1, hence the
+# explicit upgrade step below (node:20's bundled npm may be older).
 
 on:
   push:
@@ -17,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # for npm provenance
+      id-token: write # required for OIDC trusted publishing
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +29,8 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Ensure npm CLI supports trusted publishing
+        run: npm install -g npm@latest
+
       - name: Publish js/ to npm
         run: cd js && npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
