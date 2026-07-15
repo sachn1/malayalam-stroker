@@ -150,11 +150,19 @@ describe("tryComposeStroke", () => {
     // "ABs": base "AB" isn't itself in STROKE_LIBRARY, but is composable
     // from "A" + suffix mark "B" -- this is the exact shape of bug fixed
     // for ദ്യു (a mark chain more than one level deep).
+    //
+    // Deliberately NOT pre-registering "AB" in `deepClusters` here, matching
+    // real glyph-data.json's shape: build_glyph_data.py never bakes
+    // intermediate composed clusters as their own direct entries (only
+    // atoms - single/direct clusters - and their composable marks are
+    // baked; see resolveGhostEntry's docstring in index.js). A fixture that
+    // pre-registers "AB" tests the stroke-recursion path only, and would
+    // pass even if the *glyph*-entry lookup for the intermediate base falls
+    // back to a bare `clusters[baseKey]` lookup instead of composing it -
+    // exactly the bug that shipped for ത്സ്യ/ത്സ്യം (see resolveGhostEntry).
     const deepClusters = {
       ...clusters,
       B: { glyphs: [{ d: "circle", x: 0, y: 0 }, { d: "content", x: 10, y: 0 }], advance: 40 },
-      AB: { glyphs: [{ d: "gA", x: 0, y: 0 }, { d: "content", x: 100, y: 0 }], advance: 140 },
-      ABs: { glyphs: [{ d: "gA", x: 0, y: 0 }, { d: "content", x: 100, y: 0 }, { d: "content2", x: 140, y: 0 }], advance: 190 },
     };
     const deepMarks = {
       ...marks,
@@ -296,6 +304,30 @@ describe("resolveSegments", () => {
     };
     const segs = resolveSegments("s", clusters, marks);
     expect(segs.map((s) => s.cluster)).toEqual(["s"]);
+  });
+
+  it("prefers mark composition over a *multi-character* mark's own standalone match", () => {
+    // Same shape as the single-char "s" case above, but with a 2-char mark
+    // key (mirrors ്ര - VIRAMA + "ര" - getting its own standalone
+    // glyph-data entry so the recorder has a real ghost to record against;
+    // see build_glyph_data.py's _standalone_inputs()). The direct-match
+    // loop above checks lengths [4, 3, 2], unlike the always-mark-first
+    // 1-char fallback at the very bottom of this function - so a 2-char
+    // mark needs its own guard, not just the 1-char one already covered.
+    // Regression: real text like ചന്ദ്രൻ used to split "mr" off as its own
+    // isolated standalone match (dotted-circle glyph included) instead of
+    // composing onto "AB", the base it belongs to.
+    const clusters = {
+      A: { glyphs: [{ d: "gA", x: 0, y: 0 }], advance: 100 },
+      B: { glyphs: [{ d: "gB", x: 0, y: 0 }], advance: 80 },
+      AB: { glyphs: [{ d: "gA", x: 0, y: 0 }, { d: "gB", x: 100, y: 0 }], advance: 180 },
+      mr: { glyphs: [{ d: "circle", x: 0, y: 0 }, { d: "content", x: 30, y: 0 }], advance: 50 },
+    };
+    const marks = {
+      mr: { shift: 0, prefix: [], suffix: [{ d: "Msuf", x: 0, y: 0 }], trailingWidth: 20 },
+    };
+    const segs = resolveSegments("ABmr", clusters, marks);
+    expect(segs.map((s) => s.cluster)).toEqual(["ABmr"]);
   });
 
   it("warns and skips a character with no cluster or mark match at all", () => {

@@ -222,6 +222,41 @@ function composeMark(base, mark) {
 }
 
 /**
+ * Resolve `cluster`'s ghost glyph entry ({glyphs, advance}), composing it
+ * from a shorter base + mark recursively when it isn't already a directly
+ * registered `clusters` entry - mirrors {@link resolveSegments}'s top-level
+ * ghost composition, but keyed for lookup by any (possibly-composed) cluster
+ * string rather than built up while parsing text left-to-right.
+ *
+ * {@link tryComposeStroke} needs this: it requires each intermediate base's
+ * *advance* to position a composed mark stroke, even when that intermediate
+ * cluster (e.g. "ത്സ്യ" en route to "ത്സ്യം") was never itself pre-baked as
+ * its own glyph-data entry - only its own base ("ത്സ") and the mark ("്യ")
+ * were. Without this, tryComposeStroke bails on any 2+-level mark chain
+ * whose intermediate step isn't separately registered, silently dropping to
+ * the outline-trace fallback even when every stroke it needs is available.
+ *
+ * @param {string} cluster
+ * @param {Record<string, object>} clusters
+ * @param {Record<string, object>} marks
+ * @returns {{ glyphs: object[], advance: number } | null}
+ */
+function resolveGhostEntry(cluster, clusters, marks) {
+  if (clusters[cluster]) return clusters[cluster];
+  for (const markLen of [2, 1]) {
+    if (cluster.length <= markLen) continue;
+    const baseKey = cluster.slice(0, -markLen);
+    const markKey = cluster.slice(-markLen);
+    const mark = marks[markKey];
+    if (!mark) continue;
+    const base = resolveGhostEntry(baseKey, clusters, marks);
+    if (!base) continue;
+    return composeMark(base, mark);
+  }
+  return null;
+}
+
+/**
  * Offset every absolute coordinate in an SVG path's `d` string by (dx, dy).
  * Mirrors tools/.../stroke_compose.py's `offset_svg_path` exactly - same
  * regex-based approach, needed here to compose *stroke* paths at runtime
@@ -399,7 +434,7 @@ function tryComposeStroke(cluster, glyphData) {
     const baseKey = cluster.slice(0, -markLen);
     const markKey = cluster.slice(-markLen);
     const base = STROKE_LIBRARY[baseKey] ?? tryComposeStroke(baseKey, glyphData);
-    const baseGlyphEntry = clusters[baseKey];
+    const baseGlyphEntry = resolveGhostEntry(baseKey, clusters, marks);
     if (!base?.strokes?.length || !baseGlyphEntry) continue;
 
     const splitParts = markLen === 1 ? SPLIT_VOWEL_PARTS[markKey] : undefined;
@@ -535,12 +570,19 @@ function resolveSegments(text, clusters, marks) {
     for (const len of [4, 3, 2]) {
       if (i + len > text.length) continue;
       const slice = text.slice(i, i + len);
-      if (clusters[slice]) {
-        segs.push({ cluster: slice, entry: clusters[slice] });
-        i += len;
-        matched = true;
-        break;
-      }
+      if (!clusters[slice]) continue;
+      // A registered mark (e.g. ്ര's own standalone glyph-data entry, kept
+      // only so the stroke recorder has a real ghost to record it against
+      // - see build_glyph_data.py's _standalone_inputs()) must get first
+      // crack at attaching onto the previous segment, exactly like the
+      // 1-char virama/matra case below: matching it directly here would
+      // render its isolated content+dotted-circle shape standalone in real
+      // text instead of composing onto the base it belongs to.
+      if (marks[slice] && segs.length > 0) continue;
+      segs.push({ cluster: slice, entry: clusters[slice] });
+      i += len;
+      matched = true;
+      break;
     }
     if (matched) continue;
 
@@ -595,14 +637,14 @@ function resolveSegments(text, clusters, marks) {
  *   always animate the outer-contour outline fallback, even for clusters with authored
  *   strokes. Useful for a consistent tracing style independent of authoring coverage
  *   (e.g. a wordmark mixing authored and not-yet-authored clusters).
- * @returns {{ load: Function, loadStrokes: Function, play: Function, replay: Function, cancel: Function, destroy: Function }}
+ * @returns {{ load: Function, loadStrokes: Function, play: Function, replay: Function, cancel: Function, destroy: Function, getFallbackClusters: Function }}
  */
 export function createStrokeWriter(container, options = {}) {
   const SPEED = options.speed ?? 6000;
   const TIGHTEN = options.tighten ?? DEFAULT_TIGHTEN_FRACTION;
   const STROKE_WIDTH_FRACTION = options.strokeWidth ?? DEFAULT_STROKE_WIDTH_FRACTION;
   const OUTLINE_ONLY = options.outlineOnly ?? false;
-  const state = { playToken: 0 };
+  const state = { playToken: 0, lastFallbackClusters: [] };
   let glyphData = options.glyphData ?? null;
   let lastText = null;
 
@@ -691,7 +733,7 @@ export function createStrokeWriter(container, options = {}) {
    * Render the ghost letterforms and animated stroke paths into `container`.
    *
    * @param {{ unitsPerEm: number, ascent: number, descent: number, totalAdvance: number, segGroups: object[] }} trace
-   * @returns {{ glyphUnits: object[], stylus: SVGCircleElement }}
+   * @returns {{ glyphUnits: object[], stylus: SVGCircleElement, fallbackClusters: string[] }}
    */
   function buildStage(trace) {
     container.innerHTML = "";
@@ -721,12 +763,18 @@ export function createStrokeWriter(container, options = {}) {
     stylus.style.opacity = "0";
     svg.appendChild(stylus);
 
+    const fallbackClusters = [];
     const glyphUnits = segGroups.map((grp) => {
       const authored = OUTLINE_ONLY
         ? null
         : (STROKE_LIBRARY[grp.cluster] ??
            tryComposeStroke(grp.cluster, glyphData) ??
            tryComposeFromCharacters(grp.cluster, glyphData));
+
+      // Only a genuine gap when outline-only wasn't explicitly requested -
+      // OUTLINE_ONLY always skips STROKE_LIBRARY by design, so that's not
+      // something to flag as missing handwriting data.
+      if (!OUTLINE_ONLY && !authored?.strokes?.length) fallbackClusters.push(grp.cluster);
 
       // Authored path: one group element translated to the cluster origin.
       if (authored?.strokes?.length) {
@@ -791,7 +839,7 @@ export function createStrokeWriter(container, options = {}) {
       return { gEl: null, subUnits };
     });
 
-    return { glyphUnits, stylus };
+    return { glyphUnits, stylus, fallbackClusters };
   }
 
   // ── Animation ─────────────────────────────────────────────────────────
@@ -867,7 +915,13 @@ export function createStrokeWriter(container, options = {}) {
   async function playOnce(text, speedMul, token) {
     const trace = buildTrace(text);
     if (!trace) return;
-    const { glyphUnits, stylus } = buildStage(trace);
+    const { glyphUnits, stylus, fallbackClusters } = buildStage(trace);
+    state.lastFallbackClusters = fallbackClusters;
+    if (fallbackClusters.length) {
+      console.warn(
+        `malayalam-stroker: no handwriting data for ${fallbackClusters.map((c) => JSON.stringify(c)).join(", ")} in ${JSON.stringify(text)} - showing an approximated outline trace instead`
+      );
+    }
 
     for (const unit of glyphUnits) {
       if (token !== state.playToken) return;
@@ -926,6 +980,23 @@ export function createStrokeWriter(container, options = {}) {
     state.playToken++;
   }
 
+  /**
+   * Clusters from the most recent `play()`/`replay()` call that had no
+   * authored (or composable-from-authored) handwriting data and fell back
+   * to an outline trace instead - i.e. an approximation of the printed
+   * glyph's own border, not real handwriting motion. Empty when every
+   * cluster in the last-played text had real stroke data, or before any
+   * `play()` call has completed.
+   *
+   * Use this to tell users a trace is only an approximation for part of a
+   * word, e.g. `if (writer.getFallbackClusters().length) { ...show a note... }`.
+   *
+   * @returns {string[]}
+   */
+  function getFallbackClusters() {
+    return state.lastFallbackClusters;
+  }
+
   /** Cancel animation and remove all DOM nodes from `container`. */
   function destroy() {
     cancel();
@@ -933,7 +1004,7 @@ export function createStrokeWriter(container, options = {}) {
     lastText = null;
   }
 
-  return { load, loadStrokes, play, replay, cancel, destroy };
+  return { load, loadStrokes, play, replay, cancel, destroy, getFallbackClusters };
 }
 
 /**
@@ -943,6 +1014,7 @@ export function createStrokeWriter(container, options = {}) {
  */
 export const _internal = {
   composeMark,
+  resolveGhostEntry,
   offsetSvgPath,
   SPLIT_VOWEL_PARTS,
   markContentAnchorX,

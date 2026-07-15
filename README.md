@@ -246,10 +246,11 @@ npm install jayasree
 
 Published at [npmjs.com/package/jayasree](https://www.npmjs.com/package/jayasree).
 `.github/workflows/publish.yml` publishes future version bumps automatically
-on a version tag push (or a manual run), once the `NPM_TOKEN` repo secret is
-set - until then, cut releases with `npm publish --access public` from `js/`.
-You can still copy `js/src/` into your project or serve it locally instead -
-it's plain ES modules, no build step required.
+on a version tag push (or a manual run), authenticated via npm Trusted
+Publishing (OIDC) - no token stored in this repo. Until the trusted publisher
+is configured on npmjs.com, cut releases with `npm publish --access public`
+from `js/`. You can still copy `js/src/` into your project or serve it
+locally instead - it's plain ES modules, no build step required.
 
 ### Configurable options
 
@@ -280,6 +281,25 @@ const writer = createStrokeWriter(document.getElementById("stage"), {
 ```js
 await writer.play("നന്ദി", { count: 3 });   // trace it three times in a row
 await writer.replay({ speed: 0.5, count: 2 }); // replay slower, twice
+```
+
+### Detecting approximated clusters
+
+Not every cluster has (or can be composed from) recorded handwriting - when
+one doesn't, `play()` falls back to animating the printed glyph's own outer
+contour instead, which looks like tracing a border rather than real
+handwriting. `getFallbackClusters()` returns which clusters from the most
+recent `play()`/`replay()` call did this, so a caller can tell the user the
+trace is only approximated for part of a word instead of silently rendering
+a border-trace as if it were normal handwriting:
+
+```js
+await writer.play("ഖ്ര");
+if (writer.getFallbackClusters().length) {
+  // e.g. ["ഖ്ര"] - no authored stroke, and no composable mark recipe
+  // (subjoined-ra) to build one from other recordings.
+  showNote("Some strokes are approximated - handwriting for this exact letter combination isn't recorded yet.");
+}
 ```
 
 ## Repo layout
