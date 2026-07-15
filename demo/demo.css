@@ -11,16 +11,14 @@ body {
   color: #1a1a2e;
 }
 
-/* ── Logo (animated ജയശ്രീ masthead) ── */
+/* ── Logo (static violet ജയശ്രീ wordmark - see demo.js for why it's
+   built via createStrokeWriter but not animated) ── */
 
 #logo-stage {
   min-height: 90px;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  --ms-ink-color: #1a1a2e;
-  --ms-stylus-color: #e8b84b;
 }
 
 #logo-stage svg {
@@ -35,6 +33,13 @@ body {
   fill: #a78bfa;
   fill-opacity: 0.9;
   stroke: none;
+}
+
+/* Static wordmark: the black outline (.ms-stroke) stays, forced fully drawn
+   by demo.js instead of animated - only the pen-tip stylus dot is hidden,
+   since a fixed dot makes no sense once nothing is animating. */
+#logo-stage .ms-stylus {
+  display: none;
 }
 
 p.tagline {
