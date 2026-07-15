@@ -93,6 +93,52 @@ The site (landing page + demo + recorder) deploys to GitHub Pages via
   until/unless the site moves somewhere configurable.
 - A custom domain, if the project ever outgrows the github.io URL.
 
+## Bug-report → data pipeline
+
+Right now, diagnosing "this word/letter renders wrong" is entirely manual -
+today's session doing exactly that (the space-rendering gap, the ത്സ്യ
+composition bug, and the ്ര missing-mark gap) took reading through
+`resolveSegments`/`tryComposeStroke` by hand, shaping clusters directly via
+`shape_word()` in a scratch script, and cross-referencing three JSON files.
+That's not sustainable once reports come from real users instead of one
+person reading the source. Needs a proper pipeline:
+
+- **A one-command diagnostic**, e.g. `tools/diagnose.py <word>` (or a JS
+  equivalent for browser-side use), that takes a reported word and reports,
+  per cluster: directly authored / composed-from-authored / outline-fallback
+  - and *why* for the fallback case specifically (missing base stroke?
+    missing mark recipe entirely, like ്ര today? mark recipe exists but the
+    composition itself failed - the resolveGhostEntry-shaped bug class?).
+  This is the exact investigation this session did by hand, made reusable.
+  `getFallbackClusters()` (added this session, see README's "Detecting
+  approximated clusters") already gives runtime code the *first* signal
+  (which clusters fell back); this tool would be the next layer down -
+  explaining *why*, for whoever's triaging the report.
+- **A standing coverage gate**, not just point fixes. `composition-coverage.test.js`
+  (added this session) systematically checks conjunct+mark chains resolve
+  instead of silently bailing, and already caught a real regression that a
+  hand-written unit test's fixture had accidentally masked (its intermediate
+  cluster was pre-registered in the mock, which real glyph-data.json never
+  does). Worth extending as new mark chains and multi-word phrases come up,
+  so composition regressions are caught in CI, not by a user report.
+- **A frictionless report → record loop.** Once a report is confirmed as a
+  genuine missing-stroke gap (not a bug), recording the fix currently means:
+  open the recorder, manually type the exact cluster string into "Add
+  custom cluster" (no ghost, no reduced-set prompt for it since it isn't in
+  `clusters` - true for every subjoined mark, not just ്ര), record, export,
+  merge into `stroke-data.json`, regenerate `glyph-data.json` +
+  `stroke-recorder-standalone.html`. `tools/diagnose.py` above could end
+  with "run this to jump straight to recording it" instead of the reporter
+  (or whoever triages) having to reconstruct those steps.
+- **Catch embedded-data staleness**, not just source staleness.
+  `build_standalone_recorder.py --check` only hashes
+  `stroke-recorder.{html,css,js}` + the favicon - it happily reports "in
+  sync" even when the *embedded* `glyph-data.json`/`stroke-data.raw.json`
+  snapshot is stale (discovered this session: the standalone tool's bundled
+  marks table was missing ്ര right after it was added to the real file,
+  with `--check` passing the whole time). The hash should cover the bundled
+  data files too.
+
 ## Testing & tooling
 
 - **Headless-browser coverage for `index.js`'s DOM-dependent code** - the
