@@ -1,14 +1,4 @@
 name: Publish to npm
-# Fires only on a real version tag (i.e. after `make bump` / `cz bump` pushes
-# one) or a manual run - never on every push to master. npm publishes are
-# effectively permanent, so this deliberately mirrors `make bump` being a
-# manual, deliberate action rather than continuous per-commit automation.
-#
-# Auth: npm Trusted Publishing (OIDC) - no NPM_TOKEN secret, nothing to
-# rotate or leak. One-time setup on npmjs.com: the jayasree package ->
-# Settings -> Trusted Publisher -> GitHub Actions -> org "sachn1", repo
-# "jayasree", workflow "publish.yml". Requires npm CLI >=11.5.1, hence the
-# explicit upgrade step below (node:20's bundled npm may be older).
 
 on:
   push:
@@ -30,7 +20,7 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm CLI supports trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Publish js/ to npm
         run: cd js && npm publish --access public --provenance

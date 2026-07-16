@@ -77,9 +77,19 @@ update-snapshot:
 # ── Release ──────────────────────────────────────────────────────────────
 
 # Runs from the repo root on purpose: cz reads [tool.commitizen] from the
-# root pyproject.toml (poetry -C only selects the venv, not the cwd).
+# root pyproject.toml and resolves every `version_files` entry relative to
+# cwd. `poetry -C python run cz bump` silently broke this - contrary to the
+# comment this used to have, `-C` *does* chdir into `python/` for the whole
+# invocation (verified: `poetry -C python run pwd` prints .../python), so
+# cz found the root config (it searches upward) and correctly bumped its
+# own version + wrote CHANGELOG.md at the root, but then resolved
+# version_files paths like "index.html" against python/index.html - which
+# doesn't exist - and silently skipped every one of them. Shipped as v0.2.0
+# with python/pyproject.toml, __init__.py, js/package.json, and index.html
+# all still reading 0.1.0. Invoking the venv's cz binary directly instead of
+# through `poetry run`/`poetry -C` sidesteps the chdir entirely.
 bump:
-	poetry -C python run cz bump
+	python/.venv/bin/cz bump
 
 # ── Everything at once ───────────────────────────────────────────────────
 

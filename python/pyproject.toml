@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malayalam-stroker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shape Malayalam text and extract per-glyph SVG stroke paths for stroke-order / handwriting-trace widgets"
 readme = "README.md"
 license = { text = "MIT" }
