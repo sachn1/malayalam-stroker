@@ -1,0 +1,12 @@
+# Pins the venv location to python/.venv, project-wide - not just a local
+# preference. The Makefile's `bump`/`bump-ci` targets invoke
+# python/.venv/bin/cz directly (deliberately bypassing `poetry run`/
+# `poetry -C`, see the `bump` target's own comment for why), which only
+# works if the venv actually lives there. Without this file, that's only
+# true on a machine with `virtualenvs.in-project` set globally - true by
+# coincidence on existing contributors' machines, but not on a fresh
+# GitHub Actions runner, which uses Poetry's real default (a centralized
+# cache dir) instead. Discovered when release-on-merge.yml's first real
+# run failed with "python/.venv/bin/cz: No such file or directory".
+[virtualenvs]
+in-project = true
