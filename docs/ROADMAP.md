@@ -18,6 +18,77 @@ it forever).
   npm now (Trusted Publishing via `.github/workflows/publish.yml`); `python/`
   is still deliberately unpublished - a build-time-only tool
   (`python/README.md`), so this may never be worth doing for it specifically.
+
+## Smoothing: reduce spurious hard corners
+
+Raised in passing: smoothed strokes (`geometry.py`'s `smooth_stroke`) still
+show more hard corners than expected, even accounting for the fact that
+corner preservation is deliberate (see `docs/CENTERING_EXPERIMENTS.md`'s
+smoothing section - a single global spline through a genuine corner
+overshoots into a spurious loop, which is the whole reason corners are
+detected and split on rather than smoothed through). The question is
+whether the *detection* is over-eager, not whether corners should exist
+at all.
+
+**Likely root cause, from reading `split_at_corners`/`turn_angles`:**
+corner detection runs on `CORNER_ANGLE_DEG` (50°), a flat angle threshold
+between adjacent RDP-simplified waypoints - but it doesn't account for how
+far apart those waypoints are. Two waypoints close together (common in a
+tightly-curved section like a loop or curl, which Malayalam letterforms
+have a lot of) need only a small physical deviation to register a large
+*angle*, so a continuously-curving-but-tight section can trip the same
+threshold a genuine sharp reversal does. That's a scale/noise-sensitivity
+problem inherent to raw-angle corner detection, not a bug exactly, but
+possibly tuned too sensitively.
+
+**Quick empirical check already done** (read-only, not implemented):
+re-ran `split_at_corners` against a 40-cluster sample of real recorded
+strokes from `stroke-data.raw.json`, varying `CORNER_ANGLE_DEG`:
+
+| threshold | avg pieces/stroke |
+|---|---|
+| 50° (current) | 2.45 |
+| 60° | 2.00 |
+| 70° | 1.96 |
+| 80° | 1.91 |
+
+Real, measurable effect, with diminishing returns past 60°. But piece
+count isn't the same as visual quality - raising the threshold too far
+risks under-detecting genuine corners and reintroducing the exact
+spurious-bulge failure mode this design exists to avoid. This needs a
+human's eye (ideally the project owner, a native writer, per this
+project's usual bar for judging letterform correctness) comparing
+before/after renders across a representative sample, not just a piece
+count.
+
+**Feasible next steps, in order of risk:**
+
+1. Try `CORNER_ANGLE_DEG` in the 60-65° range first - single-constant
+   change, cheapest to test, matches where the empirical curve above
+   already flattens out.
+2. If that's not enough on its own, make corner detection *curvature-aware*
+   instead of raw-angle: normalize the turning angle by the local segment
+   length (or equivalently, threshold on angle-per-arc-length) so a tight
+   continuous curve and a genuine sharp reversal are told apart by their
+   actual curvature, not just by how closely RDP happened to space
+   waypoints there. More correct, more implementation/test effort.
+3. Retune `rdp_epsilon` (20.0) jointly with whichever of the above lands -
+   it controls how many waypoints survive simplification before corner
+   detection ever runs, so it interacts with both.
+
+**Validation plan:** regenerate `stroke-data.json` from the existing
+`stroke-data.raw.json` corpus (`make process-strokes`, no re-recording
+needed) with each candidate change, and visually compare a representative
+sample - not just ജ (the one worked example currently in
+`docs/ARCHITECTURE.md`), since a single letter won't surface every corner
+shape Malayalam script produces. `test_geometry.py` should also grow a
+regression test once a concrete change lands, mirroring how the existing
+Catmull-Rom-tangent fix already has one
+(`test_straight_line_through_a_curved_piece_stays_straight`).
+
+Scoped as a separate PR, not blocking anything else - this is a quality
+tuning pass on already-shipped, already-working smoothing, not a bug fix.
+
 ## Learning features
 
 - **"Vanilla form" tooltips for fused/compound clusters** (opt-in, e.g.
