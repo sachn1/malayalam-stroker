@@ -1,3 +1,9 @@
+## v0.3.0 (2026-07-17)
+
+### Feat
+
+- **demo**: add speech-to-text word input; load the wordmark as a static image
+
 ## v0.2.1 (2026-07-16)
 
 ### Fix
