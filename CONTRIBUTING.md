@@ -85,23 +85,29 @@ Types follow the standard set (`feat`, `fix`, `docs`, `refactor`, `test`,
 - `data` - the committed JSON data (suffix the language, e.g. `data(ml)`)
 - `tools` / `demo` / `docs` / `ci` - the corresponding directories
 
-Releases are semantic-versioned from the commit history: `make bump` (cz
-bump) picks the next version (`feat` -> minor, `fix` -> patch, a
-`BREAKING CHANGE` footer -> major), rewrites every version reference
-(Python package, JS package, the version badge on the website), updates
-CHANGELOG.md, and tags. Don't edit version numbers by hand anywhere.
+Releases are semantic-versioned from the commit history: bumping picks the
+next version (`feat` -> minor, `fix` -> patch, a `BREAKING CHANGE` footer ->
+major), rewrites every version reference (Python package, JS package, the
+version badge on the website), updates CHANGELOG.md, and tags. Don't edit
+version numbers by hand anywhere.
 
-There are two release paths, depending on how a change lands on `master`:
+Merging a PR into `master` is what triggers a release:
+`.github/workflows/release-on-merge.yml` runs the version bump
+automatically once a PR is merged, if the merged commits include anything
+release-worthy (`feat`/`fix`/a breaking change). A PR of only
+`docs`/`chore`/`ci`/non-breaking `refactor` commits merges normally with no
+release triggered. The bump commit + tag it pushes cascades everything
+else: `pages.yml` redeploys, `publish.yml` attempts an npm publish.
 
-- **PR merge** (the normal path) - `.github/workflows/release-on-merge.yml`
-  runs the equivalent of `make bump` automatically once a PR is merged, if
-  the merged commits include anything release-worthy (`feat`/`fix`/a
-  breaking change). A PR of only `docs`/`chore`/`ci`/non-breaking `refactor`
-  commits merges normally with no release triggered. The bump commit + tag
-  it pushes cascades everything else: `pages.yml` redeploys, `publish.yml`
-  publishes to npm.
-- **Direct push to `master`** - unchanged: run `make bump` locally, then
-  `git push --follow-tags`.
+One version number covers the npm package, the (unpublished) Python
+build-tool package, and the site's version badge together - simpler than
+tracking independent version schemes per package, at the cost that plenty
+of tagged releases don't touch anything npm actually ships (e.g. a
+`docs`/`demo`-only `fix`). `publish.yml` accounts for this: it only runs
+`npm publish` if `js/src/`, `js/README.md`, or `js/LICENSE` actually
+changed since the previous tag - the tag/CHANGELOG entry still always
+happens, only the redundant npm publish is skipped. A manual
+`workflow_dispatch` run bypasses this check and always publishes.
 
 ## Adding a new language
 

@@ -13,6 +13,8 @@ jobs:
       id-token: write # required for OIDC trusted publishing
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history - needed to diff against the previous tag below
 
       - uses: actions/setup-node@v4
         with:
@@ -22,5 +24,33 @@ jobs:
       - name: Ensure npm CLI supports trusted publishing
         run: npm install -g npm@11
 
+      # A shared version number covers the npm package, the (unpublished)
+      # Python build-tool package, and the site's version badge together -
+      # see CONTRIBUTING.md's "Commit messages & versioning" for why one
+      # number is worth keeping despite this. That means plenty of tagged
+      # releases don't touch anything npm actually ships (js/src/*,
+      # js/README.md, js/LICENSE - js/package.json is deliberately excluded
+      # here since its version line always changes on every bump regardless
+      # of real content). Skip the actual publish for those - re-publishing
+      # byte-identical package contents under a new version number is just
+      # noise on npm, even though the git tag/CHANGELOG entry for it is
+      # still real and worth keeping. Only applies to the tag-push trigger;
+      # a manual workflow_dispatch run is an explicit "publish anyway".
+      - name: Check whether this release actually changed the npm package
+        id: pkg-diff
+        if: github.event_name == 'push'
+        run: |
+          prev_tag=$(git describe --tags --abbrev=0 --exclude="${{ github.ref_name }}" 2>/dev/null || true)
+          if [ -z "$prev_tag" ]; then
+            echo "No previous tag found - publishing (first release)."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$prev_tag" "${{ github.ref_name }}" -- js/src js/README.md js/LICENSE; then
+            echo "js/ unchanged since $prev_tag - skipping npm publish."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish js/ to npm
+        if: github.event_name == 'workflow_dispatch' || steps.pkg-diff.outputs.changed == 'true'
         run: cd js && npm publish --access public --provenance

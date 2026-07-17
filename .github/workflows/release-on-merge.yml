@@ -1,11 +1,8 @@
 name: Release on PR merge
 
-# Manual releases (direct push to master) stay manual: `make bump` +
-# `git push --follow-tags` locally, same as always - see docs/ROADMAP.md's
-# former "Automated releases on PR merge" entry for the reasoning this
-# implements. This workflow only covers the other path: a PR merged to
-# master is itself the "deliberate, reviewed" signal a plain push doesn't
-# have, so *that* event can safely auto-release.
+# A PR merged to master is the trigger for a release - see
+# docs/ROADMAP.md's former "Automated releases on PR merge" entry for the
+# reasoning this implements.
 #
 # What this does, end to end: bump semver from the merged commits' history
 # (skipping cleanly if none of them are release-worthy - e.g. a docs-only
@@ -14,13 +11,12 @@ name: Release on PR merge
 # here: pages.yml already redeploys on any push to master, and publish.yml
 # already publishes to npm on any `v*` tag push.
 #
-# Requires a repo secret named RELEASE_PAT (a PAT belonging to an account
-# with branch-protection bypass on master) for two independent reasons:
-# (1) master is protected, and the default GITHUB_TOKEN acts as
-# github-actions[bot], not an admin, so it can't bypass; (2) pushes
-# authenticated with the default GITHUB_TOKEN don't trigger other
-# workflows (GitHub's own loop-prevention), so pages.yml/publish.yml would
-# silently never fire even if the push itself succeeded.
+# Requires a repo secret named RELEASE_PAT (a token with push access to
+# this protected branch) for two independent reasons: (1) the default
+# GITHUB_TOKEN can't push to a protected branch; (2) pushes authenticated
+# with the default GITHUB_TOKEN don't trigger other workflows (GitHub's
+# own loop-prevention), so pages.yml/publish.yml would silently never fire
+# even if the push itself succeeded.
 
 on:
   pull_request:
