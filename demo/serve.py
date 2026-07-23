@@ -28,7 +28,7 @@ _CONTENT_TYPES = {
 class DemoHandler(BaseHTTPRequestHandler):
     """HTTP request handler for static files and the /api/shape/ endpoint."""
 
-    def do_GET(self) -> None:  # noqa: N802 - name required by BaseHTTPRequestHandler
+    def do_GET(self) -> None:
         """Handle GET requests, routing to static or shape handler."""
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/shape/"):
