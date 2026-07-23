@@ -62,7 +62,7 @@ verbose = 0
 pre-commit = "^4.6.0"
 interrogate = "^1.7.0"
 pytest = "^9.1"
-pytest-cov = "^6.0"
+pytest-cov = "^7.1"
 ruff = "0.15.22"  # pinned to match .pre-commit-config.yaml's ruff-pre-commit rev
 # python marker only because commitizen declares <4.0 and this project doesn't
 commitizen = { version = "^4.16", python = "<4.0" }
