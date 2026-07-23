@@ -152,6 +152,17 @@ const LEGACY_CHILLU = {
 };
 
 /**
+ * The 6 atomic chillu codepoints (values of {@link LEGACY_CHILLU}) - used to
+ * detect the "chillu + trailing consonant" base (currently only ൻറ; see
+ * build_glyph_data.py's `_standalone_inputs`) where a following prefix mark
+ * (െ/േ/ൈ) must split the base instead of shifting it as one block. See
+ * {@link composeMark}'s docstring for why.
+ *
+ * @type {Set<string>}
+ */
+const CHILLU_ATOMS = new Set(Object.values(LEGACY_CHILLU));
+
+/**
  * Replace legacy consonant+virama+ZWJ chillu sequences with their atomic
  * codepoint equivalent. See {@link LEGACY_CHILLU}.
  *
@@ -285,11 +296,41 @@ function buildTracePath(pathEl, startOverride, direction) {
 /**
  * Compose a base cluster entry with a trailing mark's prefix/suffix recipe.
  *
+ * For most multi-glyph bases (fused conjuncts like ത്യ) a prefix mark
+ * legitimately belongs to the whole base and shifting every glyph right as
+ * one block, then prepending the mark at x=0, is correct - real shaping
+ * agrees (see index.js's resolveSegments docstring, "പ്രത്യേക"/"ജ്യോതി").
+ *
+ * ൻറ is the one base this is wrong for: it's chillu + a trailing, unrelated
+ * റ, not a fused ligature, and real HarfBuzz output confirms the mark
+ * belongs only to the tail - it sits *between* the chillu and റ, not before
+ * the chillu (verified: in "നിൻറെ", n1cil/e1/rh land at relative x
+ * 0/2052/3447 - e1 exactly at the chillu's own advance, rh shifted from
+ * there by the mark's own shift - not e1 at 0 with the chillu pushed right).
+ * `baseKey` (the base's own character string) is what lets this be detected;
+ * callers pass it through from the cluster string they're already tracking.
+ *
  * @param {{ glyphs: {d: string, x: number, y: number}[], advance: number }} base
  * @param {{ shift: number, prefix: object[], suffix: object[], trailingWidth: number }} mark
+ * @param {string} [baseKey] - The base's character sequence, e.g. "ൻറ".
  * @returns {{ glyphs: {d: string, x: number, y: number}[], advance: number }}
  */
-function composeMark(base, mark) {
+function composeMark(base, mark, baseKey) {
+  if (
+    baseKey &&
+    mark.prefix.length > 0 &&
+    mark.suffix.length === 0 &&
+    base.glyphs.length > 1 &&
+    CHILLU_ATOMS.has(baseKey[0])
+  ) {
+    const chilluAdvance = base.glyphs[1].x;
+    const glyphs = [
+      base.glyphs[0],
+      ...mark.prefix.map((p) => ({ d: p.d, x: chilluAdvance + p.x, y: p.y })),
+      ...base.glyphs.slice(1).map((g) => ({ d: g.d, x: g.x + mark.shift, y: g.y })),
+    ];
+    return { glyphs, advance: mark.shift + base.advance + mark.trailingWidth };
+  }
   const glyphs = [
     ...mark.prefix.map((p) => ({ d: p.d, x: p.x, y: p.y })),
     ...base.glyphs.map((g) => ({ d: g.d, x: g.x + mark.shift, y: g.y })),
@@ -361,7 +402,7 @@ function resolveGhostEntry(cluster, clusters, marks) {
     if (!mark) continue;
     const base = resolveGhostEntry(baseKey, clusters, marks);
     if (!base) continue;
-    return composeMark(base, mark);
+    return composeMark(base, mark, baseKey);
   }
   return null;
 }
@@ -455,11 +496,25 @@ function markContentAnchorX(markKey, clusters) {
  * @param {{d: string}[]} markStrokes
  * @param {number} baseAdvance
  * @param {number} [markAnchorX] - See {@link markContentAnchorX}; only used for suffix marks.
+ * @param {{ strokeCount: number, advance: number } | null} [chilluSplit] - See
+ *   {@link composeMark}'s chillu-base case; mirrors it at the stroke level.
+ *   `strokeCount` is how many of `baseStrokes`' *leading* strokes are the
+ *   chillu's own (left untouched); `advance` is the chillu's own advance,
+ *   i.e. where the mark's stroke gets placed instead of x=0.
  * @returns {{ strokes: {d: string}[], advance: number } | null}
  */
-function applyMarkStroke(baseStrokes, mark, markStrokes, baseAdvance, markAnchorX = 0) {
+function applyMarkStroke(baseStrokes, mark, markStrokes, baseAdvance, markAnchorX = 0, chilluSplit = null) {
   if (mark.prefix.length > 0 && mark.suffix.length > 0) return null;
   const shift = mark.shift;
+  if (chilluSplit && mark.prefix.length > 0) {
+    const { strokeCount, advance: chilluAdvance } = chilluSplit;
+    const strokes = [
+      ...baseStrokes.slice(0, strokeCount).map((s) => ({ d: s.d })),
+      ...markStrokes.map((s) => ({ d: offsetSvgPath(s.d, chilluAdvance, 0) })),
+      ...baseStrokes.slice(strokeCount).map((s) => ({ d: offsetSvgPath(s.d, shift, 0) })),
+    ];
+    return { strokes, advance: shift + baseAdvance + mark.trailingWidth };
+  }
   const composed = baseStrokes.map((s) => ({ d: offsetSvgPath(s.d, shift, 0) }));
   const strokes =
     mark.prefix.length > 0
@@ -507,13 +562,21 @@ function applySequentialMarkStrokes(strokes, advance, markChars, marks, clusters
  * @param {string} markKey
  * @param {Record<string, object>} marks
  * @param {Record<string, object>} clusters
+ * @param {{ strokeCount: number, advance: number } | null} [chilluSplit] - See {@link applyMarkStroke}.
  * @returns {{ strokes: {d: string}[], advance: number } | null}
  */
-function tryDirectMarkStroke(baseStrokes, baseAdvance, markKey, marks, clusters) {
+function tryDirectMarkStroke(baseStrokes, baseAdvance, markKey, marks, clusters, chilluSplit = null) {
   const mark = marks?.[markKey];
   const markEntry = STROKE_LIBRARY[markKey];
   if (!mark || !markEntry?.strokes?.length) return null;
-  return applyMarkStroke(baseStrokes, mark, markEntry.strokes, baseAdvance, markContentAnchorX(markKey, clusters));
+  return applyMarkStroke(
+    baseStrokes,
+    mark,
+    markEntry.strokes,
+    baseAdvance,
+    markContentAnchorX(markKey, clusters),
+    chilluSplit
+  );
 }
 
 /**
@@ -547,10 +610,25 @@ function tryComposeStroke(cluster, glyphData) {
     const baseGlyphEntry = resolveGhostEntry(baseKey, clusters, marks);
     if (!base?.strokes?.length || !baseGlyphEntry) continue;
 
+    // See composeMark's chillu-base case: ൻറ (chillu + trailing റ) needs a
+    // following prefix mark split between the two, not shifted along with
+    // the whole base - strokeCount is the chillu's own recorded stroke
+    // count (always present, so this always resolves when baseGlyphEntry
+    // does), which marks where its strokes end and റ's begin in the flat
+    // `base.strokes` array (built by concatenating each character's own
+    // strokes in order - see tryComposeFromCharacters/compose_per_glyph).
+    let chilluSplit = null;
+    if (baseKey.length > 1 && CHILLU_ATOMS.has(baseKey[0]) && baseGlyphEntry.glyphs.length > 1) {
+      const chilluEntry = STROKE_LIBRARY[baseKey[0]] ?? tryComposeStroke(baseKey[0], glyphData);
+      if (chilluEntry?.strokes?.length) {
+        chilluSplit = { strokeCount: chilluEntry.strokes.length, advance: baseGlyphEntry.glyphs[1].x };
+      }
+    }
+
     const splitParts = markLen === 1 ? SPLIT_VOWEL_PARTS[markKey] : undefined;
     const result = splitParts
       ? applySequentialMarkStrokes(base.strokes, baseGlyphEntry.advance, splitParts, marks, clusters)
-      : tryDirectMarkStroke(base.strokes, baseGlyphEntry.advance, markKey, marks, clusters);
+      : tryDirectMarkStroke(base.strokes, baseGlyphEntry.advance, markKey, marks, clusters, chilluSplit);
 
     if (result) {
       const entry = { strokes: result.strokes };
@@ -725,7 +803,7 @@ function resolveSegments(text, clusters, marks) {
       if (!mark || !prev) continue;
       segs[segs.length - 1] = {
         cluster: prev.cluster + markCh,
-        entry: composeMark(prev.entry, mark),
+        entry: composeMark(prev.entry, mark, prev.cluster),
       };
       i += markLen;
       composed = true;
