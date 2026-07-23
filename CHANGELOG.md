@@ -1,3 +1,13 @@
+## v0.4.0 (2026-07-23)
+
+### Feat
+
+- **data**: add ൻറ ground-truth glyph shape and composed stroke data
+
+### Fix
+
+- place prefix vowel marks correctly on chillu+consonant bases like ൻറ
+
 ## v0.3.0 (2026-07-17)
 
 ### Feat

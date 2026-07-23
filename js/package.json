@@ -1,6 +1,6 @@
 {
   "name": "jayasree",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Animated stroke-trace widget for Malayalam (or any script) - renders the JSON produced by the jayasree Python package as a left-to-right ink reveal",
   "type": "module",
   "main": "src/index.js",
